@@ -74,7 +74,10 @@ def _invoice_out(invoice):
     return {**invoice, "case_id": FinanceCore.case_id(invoice["id"])}
 
 
-def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV):
+def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
+               agent_client=None):
+    """agent_client: an Anthropic client (or a test fake). None = create the
+    real client on first use, so the server starts without model credentials."""
     if db_path is _FROM_ENV:
         db_path = os.environ.get("FINANCEOPS_DB", "financeops.sqlite3")
     if owner_token is _FROM_ENV:
@@ -158,6 +161,36 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV):
     def execute_action(action_id: str, executor: str = Depends(require_owner),
                        fc: FinanceCore = Depends(core)):
         return _action_out(fc.execute_simulated(action_id, executor=executor))
+
+    # --- AI investigation (Milestone 2) ----------------------------------
+
+    model_client = {"client": agent_client}
+
+    def get_model_client():
+        if model_client["client"] is None:
+            import anthropic
+            from agent import CLIENT_MAX_RETRIES, CLIENT_TIMEOUT_SECONDS
+            try:
+                model_client["client"] = anthropic.Anthropic(
+                    timeout=CLIENT_TIMEOUT_SECONDS, max_retries=CLIENT_MAX_RETRIES)
+            except anthropic.AnthropicError:
+                raise HTTPException(503, "Model client is not configured")
+        return model_client["client"]
+
+    @app.post("/cases/{case_id}/investigate")
+    def investigate_case(case_id: str, _: str = Depends(require_owner),
+                         fc: FinanceCore = Depends(core)):
+        """Owner-only because each run calls a paid model. The result is a
+        proposal at most; approval stays a separate owner step."""
+        from agent import Investigator
+        fc.case(case_id)  # 404 before any model call
+        return Investigator(fc, get_model_client()).investigate(case_id)
+
+    @app.get("/agent-runs/{run_id}")
+    def get_agent_run(run_id: str, _: str = Depends(require_owner),
+                      fc: FinanceCore = Depends(core)):
+        """Owner-only: the trace includes full evidence text the agent read."""
+        return fc.agent_run(run_id)
 
     # --- synthetic demo events (never a provider webhook) ----------------
 

@@ -6,8 +6,27 @@
 |---|---|---|
 | 0 — scope and interfaces | Done (lean) | HTTP contract and case states below; seed in `seed.py` |
 | 1 — deterministic core and persistence | **Done** | `cases` + append-only `case_events`, schema migrations, FastAPI `api.py`, owner-token approval, `/demo/*` synthetic routes |
-| 2 — agent investigation | Next | |
-| 3–7 | Not started | |
+| 2 — agent investigation | **Done (live check pending)** | `agent.py` Claude investigator: 3 read tools + `propose_action`, case-bound, 12-call / 5-minute budget, stored traces, `POST /cases/{id}/investigate` (owner token) |
+| 3 — actions, waiting, verification | Next | |
+| 4–7 | Not started | |
+
+Milestone 2 evidence: 91 tests pass (47 from Milestone 1 unchanged, 44 new in
+`test_agent.py` using a scripted fake model built from real SDK message types):
+the agent cannot approve, execute, or reach another case; model text cannot
+close a case; proposals must cite existing evidence (including in findings)
+and are refused if the evidence changed since the model last read it; every
+run ends with a stored outcome (including crashes, refusals, max_tokens,
+timeouts, budget exhaustion); thinking is never stored; one investigation per
+case at a time. Reviewed with ECC security-reviewer, code-reviewer and
+python-reviewer; their high and medium findings were fixed. The live model
+check (`eval_agent.py --run`, BUILD_PLAN acceptance: different evidence →
+different justified proposal) has **not** been run yet; it needs Anthropic
+credentials and costs money.
+
+Known gaps carried forward: `POST /cases/{id}/actions` (manual proposals) needs
+no token; the owner sees the agent's summary via `/agent-runs/{id}`, not on the
+action itself; a case with no evidence can only end `no_proposal`; no stored
+policy or `get_policy` tool yet; investigations are synchronous.
 
 Milestone 1 evidence: 47 tests pass (`.venv/bin/python -m unittest`): the 11
 original core tests unchanged, 16 case/migration tests, 20 HTTP contract tests

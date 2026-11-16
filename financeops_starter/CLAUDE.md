@@ -2,8 +2,9 @@
 
 Read BUILD_PLAN.md and the PRD before making architectural changes.
 
-This folder contains the receivables core (`core.py`, stdlib only) and a
-Milestone 1 HTTP backend (`api.py`, FastAPI). It is not yet an autonomous agent.
+This folder contains the receivables core (`core.py`, stdlib only), an HTTP
+backend (`api.py`, FastAPI), and a Claude investigator (`agent.py`) that reads
+one case and proposes an action. It cannot approve or execute anything.
 Python 3.10+. `core.py`, `demo.py`, `seed.py` and `test_core.py` need no packages;
 the HTTP layer needs `requirements.txt` in a project virtual environment:
 
@@ -12,7 +13,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m unittest -v          # all tests (core + HTTP)
 python3 -m unittest test_core -v         # core tests, no packages needed
 python3 demo.py                          # original in-process demo
-python3 seed.py                          # seed CAD 12,000 / 10,000 demo case
+python3 seed.py                          # seed two demo cases (plain + disputed)
+.venv/bin/python eval_agent.py           # describe the live model check (no API calls)
+.venv/bin/python eval_agent.py --run     # live check: real Claude, COSTS MONEY
 FINANCEOPS_ENABLE_DEMO=1 FINANCEOPS_OWNER_TOKEN=<secret> .venv/bin/uvicorn api:create_app --factory
 ```
 
@@ -53,9 +56,25 @@ independently redesign the same interfaces.
   `_SCHEMA_V<n>` list with `SCHEMA_VERSION` bumped; never edit an old one.
 - `/demo/*` routes are synthetic-event inputs, never provider webhooks.
 
+## Agent rules (Milestone 2)
+- The model's only tools are in `agent.TOOLS`. No tool takes a case, invoice
+  or organization ID; the server binds the case. Adding a write tool requires
+  an owner-approval path and a review, never a direct model call.
+- Every proposal goes through `core.propose()` with `expected_version` = the
+  version at which the model last called `get_evidence`.
+- Every run ends with a stored outcome (`proposed`, `no_proposal`, `escalated`,
+  `failed`); unexpected errors mark the run failed before re-raising.
+- Never store thinking blocks. Pass them back to the API unchanged.
+- Unit tests use the fake client in `test_agent.py`. Only `eval_agent.py --run`
+  calls the real API, and only with the user's explicit go-ahead.
+- Environment: `FINANCEOPS_MODEL` (default `claude-opus-5-5`),
+  `FINANCEOPS_EFFORT` (default `medium`); credentials via `ANTHROPIC_API_KEY`
+  or an `ant auth login` profile.
+
 ## Current limits
-No runtime model, background scheduler, message contents/recipients, real
-provider, outgoing payments, or frontend exists yet. The owner token is one
+No background scheduler, stored policy, message contents/recipients, real
+provider, outgoing payments, or frontend exists yet. Investigations run
+synchronously inside the HTTP request (up to 5 minutes). The owner token is one
 shared demo secret, not per-user authentication or a production permission
 boundary. Approvals are not yet bound to an action payload hash or expiry.
 A future public service must authenticate approvers and validate signed
