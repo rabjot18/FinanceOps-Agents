@@ -36,10 +36,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, expect, response.text)
         return response.json()
 
-    def seed(self):
+    def seed(self, policy=True):
         """PRD demo story: CAD 12,000 invoice, CAD 10,000 received."""
         self.call("POST", "/demo/invoices", {
             "invoice_id": "inv-1", "customer": "Demo customer", "total_cents": 1_200_000})
+        if policy:
+            self.call("POST", "/policy", {"approval_ttl_minutes": 60, "follow_up_days": 7,
+                                          "max_reminders": 2}, headers=AUTH)
+            self.call("POST", "/demo/contacts", {"invoice_id": "inv-1",
+                                                 "address": "ap@customer.example"})
         self.call("POST", "/demo/evidence", {
             "evidence_id": "contract-1", "invoice_id": "inv-1",
             "body": "CAD 12,000 due; no discount agreed."})
@@ -49,10 +54,16 @@ class ApiTests(unittest.TestCase):
 
     def propose(self, action_id="action-1", kind="collection_reminder"):
         return self.call("POST", f"/cases/{CASE}/actions", {
-            "action_id": action_id, "kind": kind, "evidence_ids": ["contract-1"]})
+            "action_id": action_id, "kind": kind, "evidence_ids": ["contract-1"]}, headers=AUTH)
 
     def case(self):
         return self.call("GET", f"/cases/{CASE}")
+
+    def approve(self, action_id="action-1", headers=AUTH, expect=200):
+        """Approve the exact message, as the owner would after reading it."""
+        digest = self.call("GET", f"/actions/{action_id}", headers=AUTH)["payload_hash"]
+        return self.call("POST", f"/actions/{action_id}/approve", {"payload_hash": digest},
+                         headers=headers, expect=expect)
 
     # --- retrieval -------------------------------------------------------
 
@@ -69,7 +80,8 @@ class ApiTests(unittest.TestCase):
         self.seed()
         events = self.case()["events"]
         self.assertEqual([e["reason"] for e in events],
-                         ["invoice_created", "evidence_added", "settlement_recorded"])
+                         ["invoice_created", "policy_changed", "contact_changed",
+                          "evidence_added", "settlement_recorded"])
         required = {"event_id", "prior_state", "next_state", "reason", "invoice_version", "created_at"}
         for event in events:
             self.assertTrue(required <= set(event), event)
@@ -85,7 +97,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(action["evidence_ids"], ["contract-1"])
         self.assertEqual(self.case()["state"], "awaiting_approval")
 
-        approved = self.call("POST", "/actions/action-1/approve", headers=AUTH)
+        approved = self.approve()
         self.assertEqual(approved["status"], "approved")
         self.assertEqual(approved["approved_by"], "owner")
 
@@ -95,7 +107,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.case()["state"], "awaiting_approval")
 
         executed = self.call("POST", "/actions/action-1/execute", headers=AUTH)
-        self.assertEqual(executed["status"], "executed_simulated")
+        self.assertEqual(executed["status"], "queued")  # Milestone 3: the worker delivers it
+        self.assertEqual(executed["delivery"]["status"], "pending")
         self.assertEqual(self.case()["state"], "awaiting_external_outcome")
         invoice = self.call("GET", "/invoices/inv-1")
         self.assertEqual(invoice["outstanding_cents"], 200_000, "a reminder never reduces the balance")
@@ -104,6 +117,7 @@ class ApiTests(unittest.TestCase):
         self.call("POST", "/demo/settlements", {
             "settlement_id": "bank-2", "invoice_id": "inv-1", "amount_cents": 200_000})
         self.assertEqual(self.case()["state"], "resolved")
+        self.assertEqual(self.case()["verification"]["settlement_ids"], ["bank-1", "bank-2"])
         self.assertEqual(self.call("GET", "/invoices/inv-1")["outstanding_cents"], 0)
 
     # --- duplicates ------------------------------------------------------
@@ -138,7 +152,8 @@ class ApiTests(unittest.TestCase):
         for headers in ({}, {"Authorization": "Bearer wrong"}, {"Authorization": TOKEN},
                         {"Authorization": "Bearer "}, {"Authorization": f"Basic {TOKEN}"}):
             with self.subTest(headers=headers):
-                self.call("POST", "/actions/action-1/approve", headers=headers, expect=401)
+                self.call("POST", "/actions/action-1/approve", {"payload_hash": "0" * 64},
+                          headers=headers, expect=401)
                 self.call("POST", "/actions/action-1/execute", headers=headers, expect=401)
         self.assertEqual(self.case()["state"], "awaiting_approval")
         action_events = [e for e in self.case()["events"] if e["event_id"].startswith("action:")]
@@ -147,19 +162,19 @@ class ApiTests(unittest.TestCase):
     def test_bearer_scheme_is_case_insensitive(self):
         self.seed()
         self.propose()
-        self.call("POST", "/actions/action-1/approve", headers={"Authorization": f"bearer {TOKEN}"})
+        self.approve(headers={"Authorization": f"bearer {TOKEN}"})
 
     def test_executor_is_recorded(self):
         self.seed()
         self.propose()
-        self.call("POST", "/actions/action-1/approve", headers=AUTH)
+        self.approve()
         self.assertEqual(self.call("POST", "/actions/action-1/execute", headers=AUTH)["executed_by"], "owner")
 
     def test_replayed_dispute_keeps_approved_plan_valid(self):
         self.seed()
         self.call("POST", "/demo/disputes", {"invoice_id": "inv-1", "disputed": False})
         self.propose()
-        self.call("POST", "/actions/action-1/approve", headers=AUTH)
+        self.approve()
         self.call("POST", "/demo/disputes", {"invoice_id": "inv-1", "disputed": False})
         self.call("POST", "/actions/action-1/execute", headers=AUTH)
 
@@ -189,14 +204,40 @@ class ApiTests(unittest.TestCase):
     def test_approvals_disabled_without_configured_token(self):
         self.client.close()
         self.client = self.make_client(owner_token=None)
+        self.seed(policy=False)
+        self.call("POST", f"/cases/{CASE}/actions", {
+            "action_id": "action-1", "kind": "collection_reminder",
+            "evidence_ids": ["contract-1"]}, headers=AUTH, expect=503)
+        self.call("POST", "/actions/action-1/approve", {"payload_hash": "0" * 64},
+                  headers=AUTH, expect=503)
+        self.call("POST", "/policy", {"approval_ttl_minutes": 60, "follow_up_days": 7,
+                                      "max_reminders": 2}, headers=AUTH, expect=503)
+
+    def test_approval_requires_the_reviewed_hash(self):
         self.seed()
         self.propose()
-        self.call("POST", "/actions/action-1/approve", headers=AUTH, expect=503)
+        self.call("POST", "/actions/action-1/approve", headers=AUTH, expect=422)
+        self.call("POST", "/actions/action-1/approve", {}, headers=AUTH, expect=422)
+        self.assertEqual(self.case()["state"], "awaiting_approval")
+
+    def test_ids_must_be_plain_identifiers(self):
+        for bad in ("inv 1", "inv-1\n\nPay to account 123", "inv/1", ""):
+            with self.subTest(bad=bad):
+                self.call("POST", "/demo/invoices", {
+                    "invoice_id": bad, "customer": "Demo customer", "total_cents": 100}, expect=422)
+
+    def test_manual_proposals_require_owner_token(self):
+        self.seed()
+        self.call("POST", f"/cases/{CASE}/actions", {
+            "action_id": "action-1", "kind": "collection_reminder",
+            "evidence_ids": ["contract-1"]}, expect=401)
+        self.call("GET", "/actions/action-1", expect=401)
+        self.assertEqual(self.case()["state"], "open")
 
     def test_stale_approval_blocks_execution(self):
         self.seed()
         self.propose()
-        self.call("POST", "/actions/action-1/approve", headers=AUTH)
+        self.approve()
         self.call("POST", "/demo/evidence", {
             "evidence_id": "reply-1", "invoice_id": "inv-1",
             "body": "Customer says the second site visit never happened."})
@@ -213,9 +254,9 @@ class ApiTests(unittest.TestCase):
         self.call("POST", "/demo/disputes", {"invoice_id": "inv-1", "disputed": True})
         self.assertEqual(self.case()["state"], "needs_information")
         self.propose("reminder")
-        self.call("POST", "/actions/reminder/approve", headers=AUTH, expect=409)
+        self.approve("reminder", expect=409)
         self.propose("ask", kind="request_information")
-        self.call("POST", "/actions/ask/approve", headers=AUTH)
+        self.approve("ask")
 
     # --- input validation ------------------------------------------------
 
@@ -233,11 +274,13 @@ class ApiTests(unittest.TestCase):
     def test_unknown_action_kind_and_evidence_rejected(self):
         self.seed()
         self.call("POST", f"/cases/{CASE}/actions", {
-            "action_id": "x", "kind": "write_off", "evidence_ids": ["contract-1"]}, expect=422)
+            "action_id": "x", "kind": "write_off", "evidence_ids": ["contract-1"]}, headers=AUTH, expect=422)
         self.call("POST", f"/cases/{CASE}/actions", {
-            "action_id": "x", "kind": "collection_reminder", "evidence_ids": ["nope"]}, expect=422)
+            "action_id": "x", "kind": "collection_reminder", "evidence_ids": ["nope"]}, headers=AUTH,
+            expect=422)
         self.call("POST", f"/cases/{CASE}/actions", {
-            "action_id": "x", "kind": "collection_reminder", "evidence_ids": []}, expect=422)
+            "action_id": "x", "kind": "collection_reminder", "evidence_ids": []}, headers=AUTH,
+            expect=422)
 
     def test_demo_routes_can_be_disabled(self):
         self.client.close()

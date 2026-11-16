@@ -15,12 +15,17 @@ def main():
     path = os.environ.get("FINANCEOPS_DB", "financeops.sqlite3")
     app = FinanceCore(path)
     try:
+        # Milestone 3: approvals last 60 minutes, check for payment 7 days
+        # after a reminder, at most 2 reminders per invoice.
+        app.set_policy(approval_ttl_minutes=60, follow_up_days=7, max_reminders=2, created_by="seed")
         app.create_invoice("inv-1", "Demo customer (synthetic)", 1_200_000)
+        app.set_contact("inv-1", "ap@demo-customer.example")
         app.add_evidence("contract-1", "inv-1", "CAD 12,000 due; no discount agreed.")
         app.record_settlement("bank-1", "inv-1", 1_000_000)
 
         # Scenario 2: same kind of shortfall, but the customer disputes delivery.
         app.create_invoice("inv-2", "Harbour Clinic (synthetic)", 850_000)
+        app.set_contact("inv-2", "billing@harbour-clinic.example")
         app.add_evidence("contract-2", "inv-2", "Agreement: two on-site visits, CAD 4,250 each.")
         app.add_evidence("reply-2", "inv-2", "Customer email: the second site visit never happened; "
                                              "we will not pay the rest until this is sorted out.")

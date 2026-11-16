@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from agent import MAX_TOOL_CALLS, TOOLS, Investigator
 from api import create_app
-from core import Conflict, FinanceCore
+from core import SCHEMA_VERSION, Conflict, FinanceCore
 
 CASE = "case-inv-1"
 
@@ -126,7 +126,7 @@ class InvestigationTests(AgentTestCase):
         self.assertEqual(request["output_config"], {"effort": "medium"})
         self.assertEqual(request["fallbacks"], "default")
         self.assertEqual({t["name"] for t in request["tools"]},
-                         {"get_invoice", "get_evidence", "get_case_history", "propose_action"})
+                         {"get_invoice", "get_evidence", "get_case_history", "get_policy", "propose_action"})
         for tool in request["tools"]:
             self.assertTrue(tool["strict"])
             props = tool["input_schema"].get("properties", {})
@@ -483,7 +483,9 @@ class InvestigateApiTests(unittest.TestCase):
         self.assertEqual([c["name"] for c in fetched["calls"]], ["get_evidence", "propose_action"])
         self.assertEqual(self.client.get(f"/cases/{CASE}").json()["state"], "awaiting_approval")
         # The owner still has to approve; the agent's proposal is not approved.
-        action = self.client.post(f"/actions/{run['action_id']}/approve", headers=auth).json()
+        digest = self.client.get(f"/actions/{run['action_id']}", headers=auth).json()["payload_hash"]
+        action = self.client.post(f"/actions/{run['action_id']}/approve",
+                                  json={"payload_hash": digest}, headers=auth).json()
         self.assertEqual(action["proposed_by"], f"agent:{run['id']}")
 
     def test_unknown_case_and_run(self):
@@ -508,9 +510,14 @@ class MigrationV3Tests(unittest.TestCase):
             core.create_invoice("i", "c", 500)
             core.add_evidence("e", "i", "terms")
             core.propose("a", "i", "collection_reminder", ["e"])
-            # Rewind to a Milestone 1 (v2) database by dropping v3 objects.
+            # Rewind to a Milestone 1 (v2) database by dropping v3 and v4 objects.
+            v4_tables = ("policies", "contacts", "approvals", "outbox", "jobs",
+                         "case_verifications", "sim_clock")
             with core.transaction():
-                for sql in ("DROP TABLE agent_tool_calls", "DROP TABLE agent_runs",
+                for sql in (*(f"DROP TABLE {t}" for t in v4_tables),
+                            *(f"ALTER TABLE actions DROP COLUMN {c}"
+                              for c in ("payload", "payload_hash", "rationale")),
+                            "DROP TABLE agent_tool_calls", "DROP TABLE agent_runs",
                             "ALTER TABLE actions DROP COLUMN proposed_by",
                             "UPDATE schema_meta SET version=2"):
                     core.db.execute(sql)
@@ -518,7 +525,7 @@ class MigrationV3Tests(unittest.TestCase):
             core = FinanceCore(path)
             try:
                 self.assertEqual(core.action("a")["proposed_by"], "api")
-                self.assertEqual(core._schema_version(), 3)
+                self.assertEqual(core._schema_version(), SCHEMA_VERSION)
                 self.assertEqual(core.case_for_invoice("i")["state"], "awaiting_approval")
             finally:
                 core.close()

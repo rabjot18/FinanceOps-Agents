@@ -2,10 +2,13 @@
 
 Read BUILD_PLAN.md and the PRD before making architectural changes.
 
-This folder contains the receivables core (`core.py`, stdlib only), an HTTP
-backend (`api.py`, FastAPI), and a Claude investigator (`agent.py`) that reads
-one case and proposes an action. It cannot approve or execute anything.
-Python 3.10+. `core.py`, `demo.py`, `seed.py` and `test_core.py` need no packages;
+This folder contains the receivables core (`core.py`, stdlib only, with
+`messages.py` for message templates and hashing), an HTTP backend (`api.py`,
+FastAPI), a Claude investigator (`agent.py`) that reads one case and proposes an
+action (it cannot approve or execute anything), and a worker (`worker.py`) that
+delivers approved messages to a simulated inbox (`adapters.py`) and runs
+follow-up jobs. Python 3.10+. `core.py`, `messages.py`, `adapters.py`,
+`demo.py`, `seed.py`, `test_core.py` and `test_outbox.py` need no packages;
 the HTTP layer needs `requirements.txt` in a project virtual environment:
 
 ```bash
@@ -13,14 +16,16 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m unittest -v          # all tests (core + HTTP)
 python3 -m unittest test_core -v         # core tests, no packages needed
 python3 demo.py                          # original in-process demo
-python3 seed.py                          # seed two demo cases (plain + disputed)
+python3 seed.py                          # seed policy v1, contacts, two demo cases
+.venv/bin/python worker.py [--loop]      # deliver queued messages, run due jobs
 .venv/bin/python eval_agent.py           # describe the live model check (no API calls)
 .venv/bin/python eval_agent.py --run     # live check: real Claude, COSTS MONEY
 FINANCEOPS_ENABLE_DEMO=1 FINANCEOPS_OWNER_TOKEN=<secret> .venv/bin/uvicorn api:create_app --factory
 ```
 
-Then open http://127.0.0.1:8000/docs. Approve/execute need
-`Authorization: Bearer <secret>`; without the env var, approvals are disabled.
+Then open http://127.0.0.1:8000/docs. Proposals, approve/reject/execute, policy,
+action details and investigations need `Authorization: Bearer <secret>`;
+without the env var, they are disabled.
 `/demo/*` routes are off unless `FINANCEOPS_ENABLE_DEMO=1`; they need no token,
 so only enable them on 127.0.0.1.
 
@@ -71,11 +76,32 @@ independently redesign the same interfaces.
   `FINANCEOPS_EFFORT` (default `medium`); credentials via `ANTHROPIC_API_KEY`
   or an `ant auth login` profile.
 
+## Action rules (Milestone 3)
+- Code writes every outgoing message (`messages.render`) from stored facts:
+  amounts, invoice ID, evidence IDs, the stored contact. Never put model text,
+  rationale or evidence text into a message.
+- An approval binds the payload hash, invoice version and policy version and
+  expires after `approval_ttl_minutes`. Over HTTP the owner must send the
+  `payload_hash` they reviewed. `execute()` re-checks all of them and only
+  writes an outbox row (same transaction); it never sends. The worker checks
+  expiry again before the first send attempt.
+- No stored policy or no contact means sending is disabled.
+- The worker re-validates before each send and cancels stale messages. After a
+  timeout or crash it calls `adapter.lookup(key)` before sending again; the
+  action ID is the idempotency key. Never retry blindly.
+- Delivery changes no money. A case resolves only when settlements equal the
+  total; `_record()` stores the proof in `case_verifications`.
+- Jobs (`settlement_check`, `investigate`) have IDs derived from their cause, so
+  replays add nothing. Re-investigation jobs only run with an explicit model
+  client (`worker.py --investigate`, or `run_investigations` in the demo).
+- `execute_simulated()` is the starter's in-process shortcut; HTTP uses `execute()`.
+
 ## Current limits
-No background scheduler, stored policy, message contents/recipients, real
-provider, outgoing payments, or frontend exists yet. Investigations run
-synchronously inside the HTTP request (up to 5 minutes). The owner token is one
-shared demo secret, not per-user authentication or a production permission
-boundary. Approvals are not yet bound to an action payload hash or expiry.
-A future public service must authenticate approvers and validate signed
-provider events before ingestion.
+The worker is a single process (run one per database). The only delivery
+channel is the simulated inbox; no real provider, outgoing payments, or
+frontend exists yet. Investigations triggered over HTTP run synchronously
+inside the request (up to 5 minutes). The owner token is one shared demo
+secret, not per-user authentication or a production permission boundary.
+The demo's simulated clock (`/demo/worker/run` `advance_minutes`) is only used
+when `FINANCEOPS_ENABLE_DEMO=1`. A future public service must authenticate
+approvers and validate signed provider events before ingestion.

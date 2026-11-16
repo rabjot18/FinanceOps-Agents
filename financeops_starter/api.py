@@ -15,7 +15,7 @@ login system and must not be treated as production authentication. The
 default bind address), never on a shared network.
 """
 import hmac
-import json
+
 import os
 import sqlite3
 from typing import List, Literal, Optional
@@ -24,9 +24,13 @@ from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
+from adapters import SimulatedInbox
 from core import Conflict, FinanceCore, InvalidInput, NotFound
 
 _FROM_ENV = object()  # "read this setting from the environment"
+# IDs end up in case events and in outgoing message text, so allow only plain
+# identifier characters: no spaces, newlines or punctuation that could read as prose.
+ID_PATTERN = r"^[A-Za-z0-9_.:-]+$"
 
 
 class _Body(BaseModel):
@@ -34,39 +38,65 @@ class _Body(BaseModel):
 
 
 class InvoiceIn(_Body):
-    invoice_id: StrictStr = Field(min_length=1, max_length=64)
+    invoice_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
     customer: StrictStr = Field(min_length=1, max_length=200)
     total_cents: StrictInt = Field(gt=0)
 
 
 class EvidenceIn(_Body):
-    evidence_id: StrictStr = Field(min_length=1, max_length=64)
-    invoice_id: StrictStr = Field(min_length=1, max_length=64)
+    evidence_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
+    invoice_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
     body: StrictStr = Field(min_length=1, max_length=10_000)
 
 
 class SettlementIn(_Body):
-    settlement_id: StrictStr = Field(min_length=1, max_length=64)
-    invoice_id: StrictStr = Field(min_length=1, max_length=64)
+    settlement_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
+    invoice_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
     amount_cents: StrictInt = Field(gt=0)
     currency: Literal["CAD"] = "CAD"
 
 
 class DisputeIn(_Body):
-    invoice_id: StrictStr = Field(min_length=1, max_length=64)
+    invoice_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
     disputed: StrictBool
 
 
 class ProposalIn(_Body):
-    action_id: StrictStr = Field(min_length=1, max_length=64)
+    action_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
     kind: Literal["collection_reminder", "request_information"]
     evidence_ids: List[StrictStr] = Field(min_length=1, max_length=50)
+    rationale: Optional[StrictStr] = Field(default=None, max_length=1000)
 
 
-def _action_out(action):
-    out = dict(action)
-    out["evidence_ids"] = json.loads(out["evidence_ids"])
-    out["simulated"] = True  # Milestone 1 has no real dispatch adapter
+class ApproveIn(_Body):
+    # Required: the fingerprint of the message the owner reviewed (from
+    # GET /actions/{id}), so nobody approves text they have not seen.
+    payload_hash: StrictStr = Field(min_length=64, max_length=64)
+
+
+class RejectIn(_Body):
+    note: Optional[StrictStr] = Field(default=None, max_length=500)
+
+
+class PolicyIn(_Body):
+    approval_ttl_minutes: StrictInt
+    follow_up_days: StrictInt
+    max_reminders: StrictInt
+
+
+class ContactIn(_Body):
+    invoice_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
+    address: StrictStr = Field(min_length=3, max_length=254)
+
+
+class WorkerRunIn(_Body):
+    advance_minutes: StrictInt = Field(default=0, ge=0, le=365 * 24 * 60)
+    run_investigations: StrictBool = False  # off by default: each one is a paid model call
+
+
+def _action_out(fc, action_id):
+    out = fc.action_detail(action_id)
+    out["simulated"] = True  # the only delivery channel is the simulated inbox
     return out
 
 
@@ -113,8 +143,9 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
                             headers={"Retry-After": "1"})
 
     def core():
-        """One database connection per request, always closed afterwards."""
-        instance = FinanceCore(db_path)
+        """One database connection per request, always closed afterwards.
+        In demo mode the clock is the simulated one (/demo/worker/run moves it)."""
+        instance = FinanceCore(db_path, simulated_time=enable_demo)
         try:
             yield instance
         finally:
@@ -143,24 +174,54 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
     def get_case(case_id: str, fc: FinanceCore = Depends(core)):
         return fc.case(case_id)
 
-    # --- proposals (the future agent's write path) -----------------------
-
-    @app.post("/cases/{case_id}/actions")
-    def propose_action(case_id: str, body: ProposalIn, fc: FinanceCore = Depends(core)):
-        invoice_id = fc.case(case_id)["invoice_id"]
-        return _action_out(fc.propose(body.action_id, invoice_id, body.kind, body.evidence_ids))
-
     # --- owner-only ------------------------------------------------------
 
-    @app.post("/actions/{action_id}/approve")
-    def approve_action(action_id: str, approver: str = Depends(require_owner),
+    @app.post("/cases/{case_id}/actions")
+    def propose_action(case_id: str, body: ProposalIn, proposer: str = Depends(require_owner),
                        fc: FinanceCore = Depends(core)):
-        return _action_out(fc.approve(action_id, approver=approver))
+        """Manual proposal by the owner. The agent proposes via /investigate."""
+        invoice_id = fc.case(case_id)["invoice_id"]
+        action = fc.propose(body.action_id, invoice_id, body.kind, body.evidence_ids,
+                            proposed_by=proposer, rationale=body.rationale)
+        return _action_out(fc, action["id"])
+
+    @app.get("/actions/{action_id}")
+    def get_action(action_id: str, _: str = Depends(require_owner),
+                   fc: FinanceCore = Depends(core)):
+        """The approval view: exact message, recipient, hash, approval, delivery."""
+        return _action_out(fc, action_id)
+
+    @app.post("/actions/{action_id}/approve")
+    def approve_action(action_id: str, body: ApproveIn,
+                       approver: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        fc.approve(action_id, approver=approver, payload_hash=body.payload_hash)
+        return _action_out(fc, action_id)
+
+    @app.post("/actions/{action_id}/reject")
+    def reject_action(action_id: str, body: Optional[RejectIn] = None,
+                      rejecter: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        fc.reject(action_id, rejecter=rejecter, note=body.note if body else None)
+        return _action_out(fc, action_id)
 
     @app.post("/actions/{action_id}/execute")
     def execute_action(action_id: str, executor: str = Depends(require_owner),
                        fc: FinanceCore = Depends(core)):
-        return _action_out(fc.execute_simulated(action_id, executor=executor))
+        """Queues the approved message in the outbox; the worker delivers it."""
+        fc.execute(action_id, executor=executor)
+        return _action_out(fc, action_id)
+
+    @app.get("/policy")
+    def get_policy(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        policy = fc.policy()
+        if policy is None:
+            raise HTTPException(404, "No policy stored; sending is disabled")
+        return policy
+
+    @app.post("/policy")
+    def set_policy(body: PolicyIn, owner: str = Depends(require_owner),
+                   fc: FinanceCore = Depends(core)):
+        return fc.set_policy(body.approval_ttl_minutes, body.follow_up_days,
+                             body.max_reminders, created_by=owner)
 
     # --- AI investigation (Milestone 2) ----------------------------------
 
@@ -215,6 +276,40 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
         def demo_dispute(body: DisputeIn, fc: FinanceCore = Depends(core)):
             fc.set_disputed(body.invoice_id, body.disputed)
             return _invoice_out(fc.invoice(body.invoice_id))
+
+        @demo.post("/contacts")
+        def demo_contact(body: ContactIn, fc: FinanceCore = Depends(core)):
+            return fc.set_contact(body.invoice_id, body.address)
+
+        @demo.post("/replies")
+        def demo_reply(body: EvidenceIn, fc: FinanceCore = Depends(core)):
+            """A synthetic customer reply: new evidence plus a re-investigation job."""
+            fc.record_reply(body.evidence_id, body.invoice_id, body.body)
+            return {"evidence": fc.evidence(body.invoice_id),
+                    "case": fc.case_for_invoice(body.invoice_id)}
+
+        @demo.get("/inbox")
+        def demo_inbox():
+            return {"simulated": True, "messages": SimulatedInbox(db_path).messages()}
+
+        @demo.post("/worker/run")
+        def demo_worker_run(body: Optional[WorkerRunIn] = None, fc: FinanceCore = Depends(core),
+                            authorization: Optional[str] = Header(default=None)):
+            """Run one worker round, optionally after moving the SIMULATED clock forward.
+            Re-investigations call a paid model, so they need the owner token."""
+            from worker import run_once
+            body = body or WorkerRunIn()
+            if body.run_investigations:
+                require_owner(authorization)
+            if body.advance_minutes:
+                fc.advance_simulated_time(body.advance_minutes * 60)
+            factory = None
+            if body.run_investigations:
+                from agent import Investigator
+                client = get_model_client()
+                factory = lambda c: Investigator(c, client)  # noqa: E731
+            result = run_once(fc, SimulatedInbox(db_path), factory)
+            return {"simulated_time": fc.clock(), "result": result}
 
         app.include_router(demo)
 

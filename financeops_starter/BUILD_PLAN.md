@@ -6,9 +6,38 @@
 |---|---|---|
 | 0 — scope and interfaces | Done (lean) | HTTP contract and case states below; seed in `seed.py` |
 | 1 — deterministic core and persistence | **Done** | `cases` + append-only `case_events`, schema migrations, FastAPI `api.py`, owner-token approval, `/demo/*` synthetic routes |
-| 2 — agent investigation | **Done (live check pending)** | `agent.py` Claude investigator: 3 read tools + `propose_action`, case-bound, 12-call / 5-minute budget, stored traces, `POST /cases/{id}/investigate` (owner token) |
-| 3 — actions, waiting, verification | Next | |
+| 2 — agent investigation | **Done (live check pending)** | `agent.py` Claude investigator: read tools + `propose_action`, case-bound, 12-call / 5-minute budget, stored traces, `POST /cases/{id}/investigate` (owner token) |
+| 3 — actions, waiting, verification | **Done** | Code-written messages, hash-bound expiring approvals, stored policy + contacts, transactional outbox, `worker.py`, simulated inbox, follow-up and re-investigation jobs, proven closure |
 | 4–7 | Not started | |
+
+Milestone 3 evidence: 142 tests pass (91 earlier ones, a handful updated for the
+two deliberate contract changes below; 23 new in `test_outbox.py`, 25 new in
+`test_worker.py`, 3 new HTTP tests). Covered: the owner approves the exact
+message (hash required over HTTP); approval expires and is re-checked at first
+delivery; a changed recipient, policy or evidence blocks execution; no policy or
+no contact disables sending; policy reminder limit; `execute` only queues;
+delivery never changes the balance; timeout after accept, timeout before accept
+(with backoff), crash mid-send and restart all deliver exactly one message;
+rejected messages fail without retry; payment or new evidence before delivery
+cancels the send; follow-up date without payment reopens the case; a customer
+reply creates one re-investigation job, which runs only with a model client and
+retries after a failed model run; resolution stores which settlements prove it.
+Also checked by hand: real uvicorn server, a separate `worker.py` process, and a
+server restart between execute and delivery (one message in the inbox).
+Reviewed with ECC security-reviewer, code-reviewer and python-reviewer; all
+high and medium findings were fixed.
+
+Contract changes: `POST /actions/{id}/execute` now returns `queued` (the worker
+delivers); `POST /cases/{id}/actions` and approve need the owner token, and
+approve needs `{"payload_hash": ...}` from `GET /actions/{id}`. IDs accept only
+letters, digits and `_ . : -`.
+
+Known gaps carried forward: the simulated clock is chosen per process by
+`FINANCEOPS_ENABLE_DEMO`, so the API and worker must use the same setting; a
+queued message cannot be cancelled by the owner before delivery (only by new
+evidence, payment or expiry); one worker per database; the simulated inbox
+shares the database file; pre-Milestone 3 pending actions must be rejected and
+proposed again; the live model check (`eval_agent.py --run`) has still not run.
 
 Milestone 2 evidence: 91 tests pass (47 from Milestone 1 unchanged, 44 new in
 `test_agent.py` using a scripted fake model built from real SDK message types):
@@ -48,8 +77,13 @@ Case states in use: `open`, `needs_information`, `awaiting_approval`,
 payload hash/expiry, per-user approvers, outbox/scheduler, Postgres.
 
 HTTP contract (see `/docs` when running): `GET /invoices/{id}`,
-`GET /cases/{id}`, `POST /cases/{id}/actions`, `POST /actions/{id}/approve`
-and `/execute` (owner token), `POST /demo/{invoices,evidence,settlements,disputes}`.
+`GET /cases/{id}` (includes `verification` once resolved); owner token:
+`POST /cases/{id}/actions`, `GET /actions/{id}`, `POST /actions/{id}/approve`
+(body `payload_hash`), `/reject`, `/execute`, `GET`/`POST /policy`,
+`POST /cases/{id}/investigate`, `GET /agent-runs/{id}`; demo only:
+`POST /demo/{invoices,evidence,settlements,disputes,contacts,replies}`,
+`GET /demo/inbox`, `POST /demo/worker/run` (`advance_minutes`; owner token
+for `run_investigations`).
 
 ## What this starter includes
 
