@@ -1,0 +1,194 @@
+# FinanceOps: build with Claude Code and ECC
+
+## What this starter includes
+
+Runnable Python + SQLite receivables core, a synthetic demo, and 11 tests. It proves
+partial payment handling, duplicate settlement protection, evidence references,
+owner approval, stale-plan rejection, and settlement-based closure. It is a seed
+for the project, not a completed app or a running AI agent. SQLite is used to make
+the first example dependency-free; migrate persistence to Postgres for the shared
+application. Existing code is original project code, not copied from ECC.
+
+Run from this directory:
+
+```bash
+python3 -m unittest -v
+python3 demo.py
+```
+
+## Tool choices
+
+Claude Code: coding assistant. ECC: optional development workflows for planning,
+testing, and review. Claude API: reasoning inside the application. FastAPI:
+application endpoints and tool gateway. React + TypeScript: interface. Postgres:
+shared persistent data. Start with one backend and worker, not microservices.
+
+ECC is not the runtime finance agent. Its security/review helpers do not replace
+application permissions or financial tests. Inspect the installed hooks and scope;
+do not enable features merely because they are bundled. The plugin is third-party.
+
+The current ECC README documents these commands inside Claude Code:
+
+```text
+/plugin marketplace add https://github.com/affaan-m/ECC
+/plugin install ecc@ecc
+/plugin list
+```
+
+Use one installation route. Do not combine the plugin with a full manual install.
+Record the installed version for your team. Project instructions still belong in
+CLAUDE.md. Start with planner, test guidance, and code review; add other workflows
+when a specific task needs them. No ECC installation was performed for this kit.
+
+## Phase 0 — scope and interfaces
+
+Goal: agree what one complete case looks like. Use one Claude Code session.
+
+Prompt:
+“Read the PRD, BUILD_PLAN.md, and existing code. Use the ECC planner if available.
+Produce a small implementation plan with dependencies, file ownership, tool/API
+schemas, and acceptance tests. Start with a CAD 12,000 invoice paid CAD 10,000.
+Show the remaining CAD 2,000, evidence investigation, an approved simulated
+action, and verified settlement. Do not implement the entire PRD at once.”
+
+Deliver: schema, HTTP contract, typed tool contract, status list, seed data, and
+current milestone file. Check provider sandbox credentials now, not at demo time.
+
+## Phase 1 — deterministic core and persistence
+
+The supplied core is a starting point. Extend it with a Case table and event log,
+source/version references, migrations, HTTP endpoints, and authenticated approval.
+Keep trusted demo events separate from provider webhook routes.
+
+Prompt:
+“Extend the existing core into a FastAPI backend with persistent cases. Preserve
+the existing tests. Add contract tests for invoice retrieval, case events,
+approval, stale approval, and settlement ingestion. Do not add a model yet.
+Show one complete case through HTTP, including process restart.”
+
+Acceptance: repeated events have one effect; cases persist; only settled money
+changes outstanding balance; an unauthenticated approval request fails.
+
+## Phase 2 — agent investigation
+
+Add a runtime model with three read tools and one proposal tool:
+
+```python
+# Dispatch sketch; the HTTP backend supplies the case-bound invoice ID.
+# Do not let model arguments select arbitrary organizations or approve actions.
+def dispatch(core, invoice_id, name, args):
+    if name == "get_invoice":
+        return core.invoice(invoice_id)
+    if name == "get_evidence":
+        return core.evidence(invoice_id)
+    if name == "propose_action":
+        return core.propose(
+            args["action_id"], invoice_id,
+            args["kind"], args["evidence_ids"]
+        )
+    raise ValueError("Tool not allowed")
+```
+
+The dispatch sketch needs typed input validation, server-generated action IDs,
+durable tool traces, and run limits before integration. Expose get_policy as the
+third read tool once policy is stored. Agent actions are proposals initially.
+
+Agent loop: call Messages API with tool schemas; execute allowlisted tool_use
+blocks; return tool_result blocks; repeat until end_turn or budget exhausted.
+Validate inputs in code and handle truncated/failed responses explicitly.
+Use an environment-configured available model ID and server-only API key.
+
+Prompt:
+“Add Claude tool use to investigate a case. It must cite stored evidence and
+choose collection_reminder or request_information. Missing evidence must remain
+unknown. No approval or settlement tool may be available to the model. Bound
+the run to 12 tool calls and persist tool outcomes. Use fake model responses in
+unit tests; run live API tests only with explicit credentials and cost awareness.”
+
+Acceptance: change the evidence from a valid invoice to disputed delivery and
+observe a different justified proposal. Model text alone cannot close a case.
+
+## Phase 3 — actions, waiting, and verification
+
+Add exact message payload/recipient, policy version, expiring approval bound to
+payload hash, durable outbox, dispatch result, and follow-up jobs. Default to a
+simulated inbox. On reply or settlement, resume the existing case. The supplied
+execute_simulated method is only a local stand-in, not an outbox implementation.
+
+Prompt:
+“Complete the receivables loop. Separate proposal, approval, dispatch, waiting,
+and settlement verification. Restart the worker mid-case. Test stale approvals,
+duplicate events, timeout with unknown dispatch result, and new evidence after
+approval. Never infer settlement from dispatch success.”
+
+Acceptance: case survives restart and a new reply triggers fresh investigation;
+no duplicate message on retry; settlement is separately verified.
+
+## Phase 4 — visible product and parallel development
+
+Only now split work: lead owns orchestration and shared contracts; frontend
+worker owns React case/evidence/approval screens; integration worker owns adapter
+and fixture files. Each gets its own worktree. Merge one task at a time and run
+integration tests on the merged result. Use a fresh review context after changes.
+
+Prompt for frontend:
+“Implement the case workspace against the frozen API schema. Show evidence,
+current state, proposed versus executed actions, and approval. Handle loading,
+failure, and stale data. Do not duplicate business logic in the frontend.”
+
+Acceptance: a user can inspect and approve a real backend case from the UI.
+
+## Phase 5 — connected vendor payments and cash
+
+Add bill validation, duplicate detection, protected obligations, and daily cash
+calculations. A changed receipt date affects proposed vendor payment scheduling.
+Payments stay inside contractual dates unless a recorded agreement changes them.
+Start with one simple vendor workflow; do not generalize all accounting domains.
+
+Prompt:
+“Add a vendor bill case and deterministic cash simulation. Preserve protected
+payroll. Let the agent compare valid dates using the calculator tool. Block
+duplicate bills. If no plan meets the constraints, escalate the shortfall.
+Execute only in the simulated payment adapter with explicit approval.”
+
+Acceptance: a delayed incoming payment changes the outgoing plan, or produces
+an honest infeasibility result. A proposed collection never increases actual cash.
+
+## Phase 6 — one real sandbox connector
+
+Replace one adapter, not the whole backend. Choose based on accessible credentials
+and required operations. A bank-feed integration supplies transactions; it does
+not automatically provide invoicing or outgoing payments. Test authentication,
+normalization, event deduplication, provider status readback, timeouts, and retries.
+Never label a simulated operation as sandbox-backed.
+
+## Phase 7 — evaluation and demo
+
+Test at minimum: happy path, partial payment, valid dispute, missing evidence,
+duplicate bill, stale approval, unknown action outcome, restart, and cash shortfall.
+Use assertions against database/provider state, not only the model's explanation.
+Track resolve-or-escalate correctness, unauthorized actions, tool calls, latency,
+and cost. Keep fixed synthetic fixtures and test unseen wording/amount variations.
+Review model-facing evidence for prompt injection attempts.
+
+Demo: invoice created → partial payment → investigation → evidence changes →
+agent replans → user approves → simulated action → settlement event → resolved.
+Add the connected vendor-payment story once the first loop is reliable.
+
+## Session handoff template
+
+Task; owned paths; dependency contracts; current commit; acceptance tests;
+forbidden changes; commands; known limitations. End every task with changed files,
+checks actually run, unresolved failures, and next step. Avoid several sessions
+editing shared migrations or tool schemas simultaneously.
+
+## Sources reviewed
+
+- https://github.com/affaan-m/ECC
+- https://github.com/affaan-m/ECC/blob/main/agents/planner.md
+- https://github.com/affaan-m/ECC/blob/main/agents/code-reviewer.md
+- https://academy.claude.com/courses/ai-native-sdlc-playbook/parallel-sessions-and-subagents
+- https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls
+
+These are development references, not evidence that this starter is a production
+finance system. The supplied code has no live-model integration or external API.
