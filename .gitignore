@@ -11,3 +11,9 @@ __pycache__/
 # Machine-specific
 .DS_Store
 .claude/settings.local.json
+
+# Frontend (Milestone 4)
+node_modules/
+frontend/dist/
+test-results/
+playwright-report/

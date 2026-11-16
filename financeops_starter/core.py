@@ -659,24 +659,81 @@ class FinanceCore:
         # One read transaction, so the state and the events are the same snapshot.
         self.db.execute("BEGIN")
         try:
-            row = self.db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
-            if row is None:
-                raise NotFound("Unknown case")
-            result = dict(row)
-            result["events"] = [dict(r) for r in self.db.execute(
-                "SELECT event_id, prior_state, next_state, reason, invoice_version, created_at "
-                "FROM case_events WHERE case_id=? ORDER BY seq", (case_id,))]
-            result["verification"] = None
-            if row["state"] == "resolved":
-                proof = self.db.execute(
-                    "SELECT * FROM case_verifications WHERE case_id=? ORDER BY seq DESC LIMIT 1",
-                    (case_id,)).fetchone()
-                if proof:
-                    result["verification"] = {**dict(proof),
-                                              "settlement_ids": json.loads(proof["settlement_ids"])}
+            return self._case_snapshot(case_id)
         finally:
             self.db.rollback()  # read-only: nothing to commit
+
+    def _case_snapshot(self, case_id):
+        row = self.db.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        if row is None:
+            raise NotFound("Unknown case")
+        result = dict(row)
+        result["events"] = [dict(r) for r in self.db.execute(
+            "SELECT event_id, prior_state, next_state, reason, invoice_version, created_at "
+            "FROM case_events WHERE case_id=? ORDER BY seq", (case_id,))]
+        result["verification"] = None
+        if row["state"] == "resolved":
+            proof = self.db.execute(
+                "SELECT * FROM case_verifications WHERE case_id=? ORDER BY seq DESC LIMIT 1",
+                (case_id,)).fetchone()
+            if proof:
+                result["verification"] = {**dict(proof),
+                                          "settlement_ids": json.loads(proof["settlement_ids"])}
         return result
+
+    def cases(self):
+        """Every case with the figures a list screen needs, newest change first.
+        Money is computed here, never by the caller."""
+        rows = self.db.execute(
+            "SELECT c.id, c.invoice_id, c.state, c.version, c.updated_at, i.customer, "
+            "i.total AS total_cents, "
+            "i.total - COALESCE((SELECT SUM(amount) FROM settlements s "
+            "                    WHERE s.invoice_id = i.id), 0) AS outstanding_cents, "
+            "(SELECT COUNT(*) FROM actions a WHERE a.invoice_id = i.id "
+            f"  AND a.status IN ({','.join('?' * len(_PENDING))})) AS pending_actions "
+            "FROM cases c JOIN invoices i ON i.id = c.invoice_id "
+            "ORDER BY c.updated_at DESC, c.id", _PENDING).fetchall()
+        return [{**dict(r), "currency": "CAD"} for r in rows]
+
+    def workspace(self, case_id):
+        """Everything the owner reviews for one case, read as one snapshot.
+        Evidence is customer- or document-supplied text: labelled untrusted."""
+        self.db.execute("BEGIN")
+        try:
+            case = self._case_snapshot(case_id)
+            invoice_id = case["invoice_id"]
+            action_ids = [r["id"] for r in self.db.execute(
+                "SELECT id FROM actions WHERE invoice_id=? ORDER BY rowid DESC", (invoice_id,))]
+            runs = self.db.execute(
+                "SELECT id FROM agent_runs WHERE case_id=? ORDER BY started_at DESC, id LIMIT 20",
+                (case_id,)).fetchall()
+            policy = self.policy()
+            contact = self._contact(invoice_id) is not None
+            return {
+                "case": case,
+                "invoice": self.invoice(invoice_id),
+                "evidence": [{**e, "untrusted": True} for e in self.evidence(invoice_id)],
+                "actions": [self.action_detail(a) for a in action_ids],
+                "agent_runs": [self._run_summary(r["id"]) for r in runs],
+                "jobs": [dict(r) for r in self.db.execute(
+                    "SELECT * FROM jobs WHERE invoice_id=? AND status IN ('pending','running') "
+                    "ORDER BY due_at, id", (invoice_id,))],
+                "policy": policy,
+                "contact_on_file": contact,
+                "sending_enabled": policy is not None and contact,
+                "reminders_sent": self.reminders_sent(invoice_id),
+                "now": self.clock(),
+                "simulated_time": self.simulated_time,
+            }
+        finally:
+            self.db.rollback()
+
+    def _run_summary(self, run_id):
+        """A run's conclusions without its raw trace (that stays at agent_run())."""
+        run = self.agent_run(run_id)
+        run.pop("calls")
+        run.pop("final_text")
+        return run
 
     def case_for_invoice(self, invoice_id):
         return self.case(self.case_id(invoice_id))

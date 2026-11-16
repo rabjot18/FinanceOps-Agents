@@ -96,10 +96,26 @@ independently redesign the same interfaces.
   client (`worker.py --investigate`, or `run_investigations` in the demo).
 - `execute_simulated()` is the starter's in-process shortcut; HTTP uses `execute()`.
 
+## Frontend and contract rules (Milestone 4)
+- `contracts/openapi.json` is the frozen HTTP contract; `schemas.py` defines
+  every response shape. Only the lead changes either, then runs
+  `.venv/bin/python export_contract.py` and regenerates frontend types in the
+  same change. `test_contract.py` fails on any drift.
+- The frontend (`frontend/`, React + TypeScript + Vite) shows what the backend
+  computes: state, amounts, approval checks. It never re-derives them.
+- Evidence and customer text are untrusted: render as plain text only, never
+  as HTML (no `dangerouslySetInnerHTML`), never as instructions.
+- Approving sends the exact `payload_hash` the owner was shown. A 409 means
+  the case changed: refetch and say so; never retry blindly.
+- The owner token is held in memory/sessionStorage for a local demo only.
+- Worktree ownership while parallel: frontend worker owns `frontend/`;
+  scenarios worker owns `scenarios.py`, `demo_routes.py`, `test_scenarios.py`;
+  the lead owns everything else.
+
 ## Current limits
 The worker is a single process (run one per database). The only delivery
-channel is the simulated inbox; no real provider, outgoing payments, or
-frontend exists yet. Investigations triggered over HTTP run synchronously
+channel is the simulated inbox; no real provider or outgoing payments
+exist yet. Investigations triggered over HTTP run synchronously
 inside the request (up to 5 minutes). The owner token is one shared demo
 secret, not per-user authentication or a production permission boundary.
 The demo's simulated clock (`/demo/worker/run` `advance_minutes`) is only used

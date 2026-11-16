@@ -15,16 +15,15 @@ login system and must not be treated as production authentication. The
 default bind address), never on a shared network.
 """
 import hmac
-
 import os
 import sqlite3
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
-from adapters import SimulatedInbox
+import schemas
 from core import Conflict, FinanceCore, InvalidInput, NotFound
 
 _FROM_ENV = object()  # "read this setting from the environment"
@@ -117,8 +116,8 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
 
     FinanceCore(db_path).close()  # apply schema migrations once at startup
 
-    app = FastAPI(title="FinanceOps", version="0.1.0",
-                  description="Milestone 1 receivables backend. Synthetic data; simulated actions only.")
+    app = FastAPI(title="FinanceOps", version="0.4.0",
+                  description="Receivables backend. Synthetic data; simulated actions only.")
 
     # Turn domain errors into HTTP status codes in one place.
     @app.exception_handler(NotFound)
@@ -166,17 +165,29 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
 
     # --- reads -----------------------------------------------------------
 
-    @app.get("/invoices/{invoice_id}")
+    @app.get("/invoices/{invoice_id}", response_model=schemas.InvoiceOut)
     def get_invoice(invoice_id: str, fc: FinanceCore = Depends(core)):
         return _invoice_out(fc.invoice(invoice_id))
 
-    @app.get("/cases/{case_id}")
+    @app.get("/cases/{case_id}", response_model=schemas.CaseOut)
     def get_case(case_id: str, fc: FinanceCore = Depends(core)):
         return fc.case(case_id)
 
     # --- owner-only ------------------------------------------------------
 
-    @app.post("/cases/{case_id}/actions")
+    @app.get("/cases", response_model=schemas.CaseListOut)
+    def list_cases(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        """Owner-only: lists customer names and amounts."""
+        return {"cases": fc.cases()}
+
+    @app.get("/cases/{case_id}/workspace", response_model=schemas.WorkspaceOut)
+    def get_workspace(case_id: str, _: str = Depends(require_owner),
+                      fc: FinanceCore = Depends(core)):
+        """Everything the owner reviews for one case, as one snapshot. Owner-only:
+        it holds customer text and the contact address. Evidence is untrusted."""
+        return fc.workspace(case_id)
+
+    @app.post("/cases/{case_id}/actions", response_model=schemas.ActionOut)
     def propose_action(case_id: str, body: ProposalIn, proposer: str = Depends(require_owner),
                        fc: FinanceCore = Depends(core)):
         """Manual proposal by the owner. The agent proposes via /investigate."""
@@ -185,39 +196,39 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
                             proposed_by=proposer, rationale=body.rationale)
         return _action_out(fc, action["id"])
 
-    @app.get("/actions/{action_id}")
+    @app.get("/actions/{action_id}", response_model=schemas.ActionOut)
     def get_action(action_id: str, _: str = Depends(require_owner),
                    fc: FinanceCore = Depends(core)):
         """The approval view: exact message, recipient, hash, approval, delivery."""
         return _action_out(fc, action_id)
 
-    @app.post("/actions/{action_id}/approve")
+    @app.post("/actions/{action_id}/approve", response_model=schemas.ActionOut)
     def approve_action(action_id: str, body: ApproveIn,
                        approver: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         fc.approve(action_id, approver=approver, payload_hash=body.payload_hash)
         return _action_out(fc, action_id)
 
-    @app.post("/actions/{action_id}/reject")
+    @app.post("/actions/{action_id}/reject", response_model=schemas.ActionOut)
     def reject_action(action_id: str, body: Optional[RejectIn] = None,
                       rejecter: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         fc.reject(action_id, rejecter=rejecter, note=body.note if body else None)
         return _action_out(fc, action_id)
 
-    @app.post("/actions/{action_id}/execute")
+    @app.post("/actions/{action_id}/execute", response_model=schemas.ActionOut)
     def execute_action(action_id: str, executor: str = Depends(require_owner),
                        fc: FinanceCore = Depends(core)):
         """Queues the approved message in the outbox; the worker delivers it."""
         fc.execute(action_id, executor=executor)
         return _action_out(fc, action_id)
 
-    @app.get("/policy")
+    @app.get("/policy", response_model=schemas.PolicyOut)
     def get_policy(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         policy = fc.policy()
         if policy is None:
             raise HTTPException(404, "No policy stored; sending is disabled")
         return policy
 
-    @app.post("/policy")
+    @app.post("/policy", response_model=schemas.PolicyOut)
     def set_policy(body: PolicyIn, owner: str = Depends(require_owner),
                    fc: FinanceCore = Depends(core)):
         return fc.set_policy(body.approval_ttl_minutes, body.follow_up_days,
@@ -238,7 +249,7 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
                 raise HTTPException(503, "Model client is not configured")
         return model_client["client"]
 
-    @app.post("/cases/{case_id}/investigate")
+    @app.post("/cases/{case_id}/investigate", response_model=schemas.AgentRunOut)
     def investigate_case(case_id: str, _: str = Depends(require_owner),
                          fc: FinanceCore = Depends(core)):
         """Owner-only because each run calls a paid model. The result is a
@@ -247,7 +258,7 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
         fc.case(case_id)  # 404 before any model call
         return Investigator(fc, get_model_client()).investigate(case_id)
 
-    @app.get("/agent-runs/{run_id}")
+    @app.get("/agent-runs/{run_id}", response_model=schemas.AgentRunOut)
     def get_agent_run(run_id: str, _: str = Depends(require_owner),
                       fc: FinanceCore = Depends(core)):
         """Owner-only: the trace includes full evidence text the agent read."""
@@ -256,61 +267,14 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
     # --- synthetic demo events (never a provider webhook) ----------------
 
     if enable_demo:
-        demo = APIRouter(prefix="/demo", tags=["demo: synthetic events"])
+        from demo_routes import build_demo_router
+        app.include_router(build_demo_router(core, require_owner, get_model_client, db_path))
 
-        @demo.post("/invoices")
-        def demo_invoice(body: InvoiceIn, fc: FinanceCore = Depends(core)):
-            return _invoice_out(fc.create_invoice(body.invoice_id, body.customer, body.total_cents))
-
-        @demo.post("/evidence")
-        def demo_evidence(body: EvidenceIn, fc: FinanceCore = Depends(core)):
-            fc.add_evidence(body.evidence_id, body.invoice_id, body.body)
-            return {"evidence": fc.evidence(body.invoice_id)}
-
-        @demo.post("/settlements")
-        def demo_settlement(body: SettlementIn, fc: FinanceCore = Depends(core)):
-            return _invoice_out(fc.record_settlement(
-                body.settlement_id, body.invoice_id, body.amount_cents, body.currency))
-
-        @demo.post("/disputes")
-        def demo_dispute(body: DisputeIn, fc: FinanceCore = Depends(core)):
-            fc.set_disputed(body.invoice_id, body.disputed)
-            return _invoice_out(fc.invoice(body.invoice_id))
-
-        @demo.post("/contacts")
-        def demo_contact(body: ContactIn, fc: FinanceCore = Depends(core)):
-            return fc.set_contact(body.invoice_id, body.address)
-
-        @demo.post("/replies")
-        def demo_reply(body: EvidenceIn, fc: FinanceCore = Depends(core)):
-            """A synthetic customer reply: new evidence plus a re-investigation job."""
-            fc.record_reply(body.evidence_id, body.invoice_id, body.body)
-            return {"evidence": fc.evidence(body.invoice_id),
-                    "case": fc.case_for_invoice(body.invoice_id)}
-
-        @demo.get("/inbox")
-        def demo_inbox():
-            return {"simulated": True, "messages": SimulatedInbox(db_path).messages()}
-
-        @demo.post("/worker/run")
-        def demo_worker_run(body: Optional[WorkerRunIn] = None, fc: FinanceCore = Depends(core),
-                            authorization: Optional[str] = Header(default=None)):
-            """Run one worker round, optionally after moving the SIMULATED clock forward.
-            Re-investigations call a paid model, so they need the owner token."""
-            from worker import run_once
-            body = body or WorkerRunIn()
-            if body.run_investigations:
-                require_owner(authorization)
-            if body.advance_minutes:
-                fc.advance_simulated_time(body.advance_minutes * 60)
-            factory = None
-            if body.run_investigations:
-                from agent import Investigator
-                client = get_model_client()
-                factory = lambda c: Investigator(c, client)  # noqa: E731
-            result = run_once(fc, SimulatedInbox(db_path), factory)
-            return {"simulated_time": fc.clock(), "result": result}
-
-        app.include_router(demo)
+    # The built React app (frontend/dist, from `npm run build`), same origin as
+    # the API so no cross-site (CORS) rules are needed. Absent until it is built.
+    dist = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+    if os.path.isdir(dist):
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/app", StaticFiles(directory=dist, html=True), name="app")
 
     return app

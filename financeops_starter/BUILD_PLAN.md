@@ -223,6 +223,18 @@ failure, and stale data. Do not duplicate business logic in the frontend.”
 
 Acceptance: a user can inspect and approve a real backend case from the UI.
 
+**Status: in progress.** Step A (lead, contract) is done: owner-only
+`GET /cases` and `GET /cases/{id}/workspace`; typed response models for every
+route (`schemas.py`, `extra="forbid"`, so data and contract cannot drift
+silently); the contract frozen in `contracts/openapi.json` with a drift test
+(`test_contract.py`, `export_contract.py --check`); demo routes moved to
+`demo_routes.py` with `GET /demo/scenarios` and `POST /demo/scenarios/{name}`
+(additive, repeatable, nothing deleted); the built UI served at `/app`.
+159 tests pass. Next, in parallel worktrees: B (frontend, owns only
+`frontend/`) and C (scenarios, owns only `scenarios.py`, `demo_routes.py`,
+`test_scenarios.py`). Then the lead merges one at a time, adds one
+Playwright end-to-end test, reviews, and marks this phase done.
+
 ## Phase 5 — connected vendor payments and cash
 
 Add bill validation, duplicate detection, protected obligations, and daily cash
