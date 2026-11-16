@@ -1,0 +1,4 @@
+# HTTP layer only. core.py, demo.py, seed.py and test_core.py need no packages.
+fastapi==0.162.5
+uvicorn==0.54.0
+httpx2==2.14.0  # used by FastAPI's TestClient in test_api.py

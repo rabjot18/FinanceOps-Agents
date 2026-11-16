@@ -1,5 +1,37 @@
 # FinanceOps: build with Claude Code and ECC
 
+## Actual status (updated 16 November 2026)
+
+| Phase | Status | Notes |
+|---|---|---|
+| 0 — scope and interfaces | Done (lean) | HTTP contract and case states below; seed in `seed.py` |
+| 1 — deterministic core and persistence | **Done** | `cases` + append-only `case_events`, schema migrations, FastAPI `api.py`, owner-token approval, `/demo/*` synthetic routes |
+| 2 — agent investigation | Next | |
+| 3–7 | Not started | |
+
+Milestone 1 evidence: 47 tests pass (`.venv/bin/python -m unittest`): the 11
+original core tests unchanged, 16 case/migration tests, 20 HTTP contract tests
+(full CAD 12,000 → 10,000 → reminder → CAD 2,000 story across a restart,
+duplicate and concurrent settlement events, replayed disputes, missing/wrong
+token → 401, stale approval → 409, dispute blocks reminders, busy database →
+503, unexpected errors → detail-free 500). Also checked manually against a
+running uvicorn server with a restart midway through the case. Reviewed with
+ECC code-reviewer and python-reviewer; their medium findings were fixed.
+
+Known gaps carried forward: case events do not record whether an input was
+synthetic (only the `/demo` route prefix does); `invoice()["state"]` is a
+financial status while case state is the workflow status, so they can differ
+while an action is pending; no test yet for two processes migrating a fresh
+database at the same moment.
+
+Case states in use: `open`, `needs_information`, `awaiting_approval`,
+`awaiting_external_outcome`, `resolved` (PRD §7 subset). Not yet: approval
+payload hash/expiry, per-user approvers, outbox/scheduler, Postgres.
+
+HTTP contract (see `/docs` when running): `GET /invoices/{id}`,
+`GET /cases/{id}`, `POST /cases/{id}/actions`, `POST /actions/{id}/approve`
+and `/execute` (owner token), `POST /demo/{invoices,evidence,settlements,disputes}`.
+
 ## What this starter includes
 
 Runnable Python + SQLite receivables core, a synthetic demo, and 11 tests. It proves

@@ -2,9 +2,24 @@
 
 Read BUILD_PLAN.md and the PRD before making architectural changes.
 
-This folder currently contains a local persistent domain example, not a full
-backend or autonomous agent. Run `python3 -m unittest -v` and `python3 demo.py`.
-Python 3.10+; no dependencies required for the supplied code.
+This folder contains the receivables core (`core.py`, stdlib only) and a
+Milestone 1 HTTP backend (`api.py`, FastAPI). It is not yet an autonomous agent.
+Python 3.10+. `core.py`, `demo.py`, `seed.py` and `test_core.py` need no packages;
+the HTTP layer needs `requirements.txt` in a project virtual environment:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m unittest -v          # all tests (core + HTTP)
+python3 -m unittest test_core -v         # core tests, no packages needed
+python3 demo.py                          # original in-process demo
+python3 seed.py                          # seed CAD 12,000 / 10,000 demo case
+FINANCEOPS_ENABLE_DEMO=1 FINANCEOPS_OWNER_TOKEN=<secret> .venv/bin/uvicorn api:create_app --factory
+```
+
+Then open http://127.0.0.1:8000/docs. Approve/execute need
+`Authorization: Bearer <secret>`; without the env var, approvals are disabled.
+`/demo/*` routes are off unless `FINANCEOPS_ENABLE_DEMO=1`; they need no token,
+so only enable them on 127.0.0.1.
 
 ## Invariants
 - Money uses integer cents and explicit currency.
@@ -26,8 +41,22 @@ One lead owns schema/API contracts. Parallel workers operate on bounded tasks in
 separate worktrees after shared contracts exist. Never let multiple workers
 independently redesign the same interfaces.
 
+## Architecture rules (Milestone 1)
+- Business rules live in `core.py`; `api.py` only validates input, checks the
+  owner token, and maps errors (NotFound→404, Conflict→409, InvalidInput→422,
+  locked database→503). Raise these core error types, not bare ValueError:
+  anything else is a server bug and returns a detail-free 500.
+- Every state-changing core method calls `_record()` inside its transaction, so a
+  change and its `case_events` entry are saved together. Case state is derived
+  from stored facts by `_derive_state()` and checked against `CASE_TRANSITIONS`.
+- `case_events` is append-only (database triggers). Schema changes go in a new
+  `_SCHEMA_V<n>` list with `SCHEMA_VERSION` bumped; never edit an old one.
+- `/demo/*` routes are synthetic-event inputs, never provider webhooks.
+
 ## Current limits
-No HTTP API/auth, runtime model, background scheduler, message contents/recipients,
-real provider, immutable audit history, outgoing payments, or frontend exists yet.
-Local `approve()` is not a production permission boundary. A future public service
-must authenticate approvers and validate signed provider events before ingestion.
+No runtime model, background scheduler, message contents/recipients, real
+provider, outgoing payments, or frontend exists yet. The owner token is one
+shared demo secret, not per-user authentication or a production permission
+boundary. Approvals are not yet bound to an action payload hash or expiry.
+A future public service must authenticate approvers and validate signed
+provider events before ingestion.
