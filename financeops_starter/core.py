@@ -117,13 +117,21 @@ class InvalidInput(ValueError):
 # stored facts after every change; this table says which moves are legal, so a
 # bug that tries an illegal jump fails loudly instead of corrupting the case.
 CASE_TRANSITIONS = {
-    "open": {"awaiting_approval", "needs_information", "resolved"},
-    "needs_information": {"open", "awaiting_approval", "resolved"},
-    "awaiting_approval": {"open", "needs_information", "awaiting_external_outcome", "resolved"},
-    "awaiting_external_outcome": {"open", "needs_information", "awaiting_approval", "resolved"},
+    "open": {"awaiting_approval", "needs_information", "escalated", "resolved"},
+    "needs_information": {"open", "awaiting_approval", "escalated", "resolved"},
+    "awaiting_approval": {"open", "needs_information", "awaiting_external_outcome", "escalated",
+                          "resolved"},
+    "awaiting_external_outcome": {"open", "needs_information", "awaiting_approval", "escalated",
+                                  "resolved"},
+    # Milestone 5: an open escalation waits for the owner; resolving it moves on.
+    "escalated": {"open", "needs_information", "awaiting_approval", "awaiting_external_outcome",
+                  "resolved"},
     # Reopening on reversal/returned payment is a later milestone.
     "resolved": {"needs_information"},
 }
+# Proposers whose plans the autonomy rules may execute. The owner's own
+# proposals always wait for the owner.
+AUTOMATIC_PROPOSERS = ("orchestrator", "agent:")
 
 _SCHEMA_V1 = [
     """CREATE TABLE IF NOT EXISTS invoices (
@@ -620,7 +628,16 @@ class FinanceCore:
                     "payload,payload_hash,rationale) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (action_id, invoice_id, current["version"], kind, refs, "proposed", proposed_by,
                      messages.canonical_json(payload), messages.payload_hash(payload), rationale))
+                # Code decides autonomy after the proposal is stored; the
+                # proposer (model or orchestrator) never sees or sets it.
+                decision = self._autonomy_for(self.action(action_id))
+                self.db.execute("UPDATE actions SET autonomy=? WHERE id=?",
+                                (json.dumps(decision), action_id))
                 self._record(invoice_id, f"action:{action_id}:proposed", "action_proposed")
+                self._activity("action_proposed", proposed_by,
+                               f"Proposed {kind.replace('_', ' ')} for {invoice_id} "
+                               f"({decision['mode']}: {'; '.join(decision['reasons'])})",
+                               case_id=self.case_id(invoice_id), ref=action_id)
         return self.action(action_id)
 
     def action(self, action_id):
@@ -686,54 +703,70 @@ class FinanceCore:
         approval expires after the policy's approval_ttl_minutes.
         """
         with self.transaction():
-            action = self.action(action_id)
-            if action["status"] in _PAST_APPROVAL:
-                return action
-            if action["status"] in _CLOSED:
-                raise Conflict(f"Action is {action['status']}; propose again")
-            if not action["payload_hash"]:
-                raise Conflict("This action predates exact-message approval; reject it and propose again")
-            self.validate_action(action)
-            if payload_hash is not None and payload_hash != action["payload_hash"]:
-                raise Conflict("This is not the message you reviewed; reload it and approve again")
-            now = self.clock()
-            latest = self._latest_approval(action_id)
-            if action["status"] == "approved" and latest is not None and not self._expired(latest, now):
-                return action  # replayed approval: nothing new
-            policy = self.policy()
-            expires_at = _later(now, minutes=policy["approval_ttl_minutes"]) if policy else None
-            self.db.execute(
-                "INSERT INTO approvals(action_id,decision,payload_hash,invoice_version,policy_version,"
-                "decided_by,decided_at,expires_at) VALUES(?,?,?,?,?,?,?,?)",
-                (action_id, "approved", action["payload_hash"], action["version"],
-                 policy["version"] if policy else None, approver, now, expires_at))
-            self.db.execute(
-                "UPDATE actions SET status='approved', approved_by=?, approved_at=? WHERE id=?",
-                (approver, now, action_id))
-            count = self.db.execute("SELECT COUNT(*) FROM approvals WHERE action_id=? AND "
-                                    "decision='approved'", (action_id,)).fetchone()[0]
-            if count == 1:
-                self._record(action["invoice_id"], f"action:{action_id}:approved", "action_approved")
-            else:
-                self._record(action["invoice_id"], f"action:{action_id}:approved:{count}",
-                             "action_reapproved")
+            self._approve_locked(action_id, approver, payload_hash)
         return self.action(action_id)
+
+    def _approve_locked(self, action_id, approver, payload_hash):
+        """approve() inside the caller's transaction."""
+        action = self.action(action_id)
+        if action["status"] in _PAST_APPROVAL:
+            return action
+        if action["status"] in _CLOSED:
+            raise Conflict(f"Action is {action['status']}; propose again")
+        if not action["payload_hash"]:
+            raise Conflict("This action predates exact-message approval; reject it and propose again")
+        self.validate_action(action)
+        if payload_hash is not None and payload_hash != action["payload_hash"]:
+            raise Conflict("This is not the message you reviewed; reload it and approve again")
+        now = self.clock()
+        latest = self._latest_approval(action_id)
+        if action["status"] == "approved" and latest is not None and not self._expired(latest, now):
+            return action  # replayed approval: nothing new
+        policy = self.policy()
+        expires_at = _later(now, minutes=policy["approval_ttl_minutes"]) if policy else None
+        self.db.execute(
+            "INSERT INTO approvals(action_id,decision,payload_hash,invoice_version,policy_version,"
+            "decided_by,decided_at,expires_at) VALUES(?,?,?,?,?,?,?,?)",
+            (action_id, "approved", action["payload_hash"], action["version"],
+             policy["version"] if policy else None, approver, now, expires_at))
+        self.db.execute(
+            "UPDATE actions SET status='approved', approved_by=?, approved_at=? WHERE id=?",
+            (approver, now, action_id))
+        count = self.db.execute("SELECT COUNT(*) FROM approvals WHERE action_id=? AND "
+                                "decision='approved'", (action_id,)).fetchone()[0]
+        if count == 1:
+            self._record(action["invoice_id"], f"action:{action_id}:approved", "action_approved")
+        else:
+            self._record(action["invoice_id"], f"action:{action_id}:approved:{count}",
+                         "action_reapproved")
+        automatic = approver.startswith("policy:")
+        self._activity("action_auto_approved" if automatic else "action_approved", approver,
+                       f"{'Automatically approved' if automatic else 'Approved'} "
+                       f"{action['kind'].replace('_', ' ')} for {action['invoice_id']}",
+                       case_id=self.case_id(action["invoice_id"]), ref=action_id)
 
     def reject(self, action_id, rejecter="owner", note=None):
         with self.transaction():
-            action = self.action(action_id)
-            if action["status"] == "rejected":
-                return action
-            if action["status"] not in _PENDING:
-                raise Conflict(f"Only a pending action can be rejected; this one is {action['status']}")
-            self.db.execute(
-                "INSERT INTO approvals(action_id,decision,payload_hash,invoice_version,policy_version,"
-                "decided_by,decided_at,note) VALUES(?,?,?,?,?,?,?,?)",
-                (action_id, "rejected", action["payload_hash"], action["version"],
-                 (self.policy() or {}).get("version"), rejecter, self.clock(), note))
-            self.db.execute("UPDATE actions SET status='rejected' WHERE id=?", (action_id,))
-            self._record(action["invoice_id"], f"action:{action_id}:rejected", "action_rejected")
+            self._reject_locked(action_id, rejecter, note)
         return self.action(action_id)
+
+    def _reject_locked(self, action_id, rejecter, note):
+        """reject() inside the caller's transaction."""
+        action = self.action(action_id)
+        if action["status"] == "rejected":
+            return action
+        if action["status"] not in _PENDING:
+            raise Conflict(f"Only a pending action can be rejected; this one is {action['status']}")
+        self.db.execute(
+            "INSERT INTO approvals(action_id,decision,payload_hash,invoice_version,policy_version,"
+            "decided_by,decided_at,note) VALUES(?,?,?,?,?,?,?,?)",
+            (action_id, "rejected", action["payload_hash"], action["version"],
+             (self.policy() or {}).get("version"), rejecter, self.clock(), note))
+        self.db.execute("UPDATE actions SET status='rejected' WHERE id=?", (action_id,))
+        self._record(action["invoice_id"], f"action:{action_id}:rejected", "action_rejected")
+        self._activity("action_rejected", rejecter,
+                       f"Rejected {action['kind'].replace('_', ' ')} for {action['invoice_id']}",
+                       case_id=self.case_id(action["invoice_id"]), ref=action_id)
 
     def _latest_approval(self, action_id):
         return self.db.execute("SELECT * FROM approvals WHERE action_id=? ORDER BY seq DESC LIMIT 1",
@@ -750,38 +783,46 @@ class FinanceCore:
         a crash can never leave one without the other. worker.py delivers it.
         """
         with self.transaction():
-            action = self.action(action_id)
-            if action["status"] in ("queued", "dispatched", "follow_up_due"):
-                return action
-            if action["status"] != "approved":
-                raise Conflict("Owner approval required")
-            self.validate_action(action)
-            if not action["payload_hash"]:
-                raise Conflict("This action predates exact-message approval; propose it again")
-            policy = self.policy()
-            if policy is None:
-                raise Conflict("No policy is stored, so sending is disabled")
-            payload = json.loads(action["payload"])
-            if not payload["to"]:
-                raise Conflict("No contact on file for this customer; add one and propose again")
-            now = self.clock()
-            approval = self._latest_approval(action_id)
-            if (approval is None or approval["decision"] != "approved"
-                    or approval["payload_hash"] != action["payload_hash"]
-                    or approval["expires_at"] is None):
-                raise Conflict("No approval matches this exact message; approve it again")
-            if self._expired(approval, now):
-                raise Conflict(f"Approval expired at {approval['expires_at']}; review and approve again")
-            self.db.execute(
-                "INSERT INTO outbox(id,invoice_id,channel,recipient,payload,payload_hash,status,"
-                "next_attempt_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (action_id, action["invoice_id"], payload["channel"], payload["to"],
-                 action["payload"], action["payload_hash"], "pending", now, now, now))
-            self.db.execute(
-                "UPDATE actions SET status='queued', executed_by=?, executed_at=? WHERE id=?",
-                (executor, now, action_id))
-            self._record(action["invoice_id"], f"action:{action_id}:queued", "action_queued")
+            self._execute_locked(action_id, executor)
         return self.action(action_id)
+
+    def _execute_locked(self, action_id, executor):
+        """execute() inside the caller's transaction."""
+        action = self.action(action_id)
+        if action["status"] in ("queued", "dispatched", "follow_up_due"):
+            return action
+        if action["status"] != "approved":
+            raise Conflict("Owner approval required")
+        self.validate_action(action)
+        if not action["payload_hash"]:
+            raise Conflict("This action predates exact-message approval; propose it again")
+        policy = self.policy()
+        if policy is None:
+            raise Conflict("No policy is stored, so sending is disabled")
+        payload = json.loads(action["payload"])
+        if not payload["to"]:
+            raise Conflict("No contact on file for this customer; add one and propose again")
+        now = self.clock()
+        approval = self._latest_approval(action_id)
+        if (approval is None or approval["decision"] != "approved"
+                or approval["payload_hash"] != action["payload_hash"]
+                or approval["expires_at"] is None):
+            raise Conflict("No approval matches this exact message; approve it again")
+        if self._expired(approval, now):
+            raise Conflict(f"Approval expired at {approval['expires_at']}; review and approve again")
+        self.db.execute(
+            "INSERT INTO outbox(id,invoice_id,channel,recipient,payload,payload_hash,status,"
+            "next_attempt_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (action_id, action["invoice_id"], payload["channel"], payload["to"],
+             action["payload"], action["payload_hash"], "pending", now, now, now))
+        self.db.execute(
+            "UPDATE actions SET status='queued', executed_by=?, executed_at=? WHERE id=?",
+            (executor, now, action_id))
+        self._record(action["invoice_id"], f"action:{action_id}:queued", "action_queued")
+        self._activity("message_queued", executor,
+                       f"Queued {action['kind'].replace('_', ' ')} to {payload['to']} "
+                       "(simulated inbox)",
+                       case_id=self.case_id(action["invoice_id"]), ref=action_id)
 
     def execute_simulated(self, action_id, executor="owner"):
         """Original starter shortcut: records simulated dispatch in-process,
@@ -961,7 +1002,9 @@ class FinanceCore:
     # A run's trace is stored as it happens, so a crash mid-run still leaves
     # a record. The model's private reasoning is never passed to these methods.
 
-    def start_agent_run(self, case_id, model):
+    def start_agent_run(self, case_id, model, agent="collections"):
+        if agent not in AGENTS:
+            raise InvalidInput("Unknown agent")
         run_id = f"run-{uuid.uuid4().hex}"
         with self.transaction():
             invoice_id = self._case_row(case_id)["invoice_id"]
@@ -978,9 +1021,12 @@ class FinanceCore:
                                 "finished_at=? WHERE id=?", (now, other["id"]))
                 self._record(invoice_id, f"agent:{other['id']}:finished", "investigation_failed")
             self.db.execute(
-                "INSERT INTO agent_runs(id,case_id,model,status,started_at) VALUES(?,?,?,?,?)",
-                (run_id, case_id, model, "running", self.clock()))
+                "INSERT INTO agent_runs(id,case_id,model,status,started_at,agent) VALUES(?,?,?,?,?,?)",
+                (run_id, case_id, model, "running", self.clock(), agent))
             self._record(invoice_id, f"agent:{run_id}:started", "investigation_started")
+            self._activity("agent_run_started", f"agent:{agent}",
+                           f"{AGENTS[agent]['title']} started on {invoice_id}",
+                           case_id=case_id, ref=run_id)
         return run_id
 
     def record_agent_call(self, run_id, tool_use_id, name, tool_input, result, is_error):
@@ -1020,6 +1066,9 @@ class FinanceCore:
                  (final_text or "")[:2000] or None, self.clock(), run_id))
             invoice_id = self._case_row(run["case_id"])["invoice_id"]
             self._record(invoice_id, f"agent:{run_id}:finished", f"investigation_{status}")
+            self._activity("agent_run_finished", f"agent:{run['agent']}",
+                           f"{AGENTS[run['agent']]['title']} finished on {invoice_id}: {status}",
+                           case_id=run["case_id"], ref=run_id)
         return self.agent_run(run_id)
 
     def fail_agent_run_if_running(self, run_id, detail):
@@ -1207,6 +1256,9 @@ class FinanceCore:
             if not self._dispatch_due(item, now):
                 return None
             action = self.action(item_id)
+            if (item["attempts"] == 0 and (action["approved_by"] or "").startswith("policy:")
+                    and self.autonomy_status()["paused"]):
+                return None  # kill switch: hold automatic messages; expiry still applies
             if item["attempts"] >= MAX_DISPATCH_ATTEMPTS:
                 self._end_dispatch(item, "failed", "too many attempts")
                 return None
@@ -1250,6 +1302,9 @@ class FinanceCore:
                 (f"check:{item_id}", item["invoice_id"], "settlement_check", item_id,
                  _later(now, days=policy["follow_up_days"]), "pending", now, now))
             self._record(item["invoice_id"], f"outbox:{item_id}:sent", "message_dispatched_simulated")
+            self._activity("message_sent", "worker",
+                           f"Delivered to the simulated inbox for {item['invoice_id']} (no real email)",
+                           case_id=self.case_id(item["invoice_id"]), ref=item_id)
         return self.outbox_item(item_id)
 
     def mark_unknown(self, item_id, error):
@@ -1284,6 +1339,10 @@ class FinanceCore:
                         (status, reason[:500], now, item["id"]))
         self.db.execute("UPDATE actions SET status=? WHERE id=?", (status, item["id"]))
         self._record(item["invoice_id"], f"outbox:{item['id']}:{status}", f"dispatch_{status}")
+        if status == "cancelled":
+            self._activity("message_cancelled", "worker",
+                           f"Cancelled a queued message for {item['invoice_id']}: {reason[:120]}",
+                           case_id=self.case_id(item["invoice_id"]), ref=item["id"])
 
     # --- jobs: follow-ups and re-investigation (Milestone 3) -----------
 
@@ -1430,7 +1489,225 @@ class FinanceCore:
         """Events not yet applied whose time has come, oldest first."""
         return [self._event_out(r) for r in self.db.execute(
             "SELECT * FROM events WHERE routed_at IS NULL AND received_at <= ? "
-            "ORDER BY received_at, id LIMIT ?", (self.clock(), limit))]
+            "ORDER BY received_at, rowid LIMIT ?", (self.clock(), limit))]
+
+    # --- Milestone 5: autonomy rules (code decides, never the model) ----
+
+    def _evaluate_rules(self, rules, policy_version, kind, invoice, evidence_count,
+                        open_escalations, proposed_by, amount_cents):
+        """First matching rule decides; no match means the owner approves."""
+        def decision(mode, rule_id, *reasons):
+            return {"mode": mode, "rule_id": rule_id, "policy_version": policy_version,
+                    "reasons": list(reasons), "decided_at": self.clock()}
+        if not proposed_by.startswith(AUTOMATIC_PROPOSERS):
+            return decision("approve", None, "proposed by the owner")
+        if policy_version == 0:
+            return decision("approve", None, "no policy stored")
+        if not rules:
+            return decision("approve", None, f"policy v{policy_version} has no autonomy rules")
+        if open_escalations:
+            return decision("approve", None, "case has an open escalation")
+        if proposed_by.startswith("agent:") and kind == "collection_reminder":
+            # The agent only looks at cases that are not routine (a reply, a
+            # partial payment). Chasing after either is the owner's call.
+            return decision("approve", None, "agent proposed a reminder after a reply or "
+                                             "partial payment: the owner decides")
+        for rule in rules:
+            if rule["action_kind"] != kind:
+                continue
+            if rule["max_amount_cents"] is not None and amount_cents > rule["max_amount_cents"]:
+                continue
+            if rule["require_undisputed"] and invoice["disputed"]:
+                continue
+            if rule["require_evidence"] and evidence_count == 0:
+                continue
+            reason = f"rule {rule['id']}: {rule['description']}"
+            return decision(rule["mode"], rule["id"], reason)
+        if invoice["disputed"]:
+            return decision("approve", None, "invoice disputed")
+        return decision("approve", None, "no autonomy rule matched")
+
+    def _autonomy_for(self, action):
+        """The autonomy decision for a stored action under the current policy."""
+        policy = self.policy()
+        invoice = self.invoice(action["invoice_id"])
+        payload = json.loads(action["payload"]) if action.get("payload") else {}
+        return self._evaluate_rules(
+            policy["autonomy_rules"] if policy else [], policy["version"] if policy else 0,
+            action["kind"], invoice,
+            self.db.execute("SELECT COUNT(*) FROM evidence WHERE invoice_id=?",
+                            (invoice["id"],)).fetchone()[0],
+            self.db.execute("SELECT COUNT(*) FROM escalations WHERE case_id=? AND resolved_at IS NULL",
+                            (self.case_id(invoice["id"]),)).fetchone()[0],
+            action["proposed_by"], payload.get("amount_cents", invoice["outstanding_cents"]))
+
+    def auto_candidates(self):
+        """Proposed actions the autonomy rules may execute, oldest first."""
+        return [r["id"] for r in self.db.execute(
+            "SELECT id FROM actions WHERE status='proposed' AND autonomy IS NOT NULL "
+            "AND json_extract(autonomy, '$.mode') IN ('auto', 'blocked') ORDER BY rowid")]
+
+    def apply_autonomy(self, action_id):
+        """Execute what the rules allow, re-checked now (the case or policy may
+        have changed since the proposal). One transaction: re-evaluate, check
+        the kill switch, approve and queue together, so nothing slips between
+        the checks and the send. Every approve()/execute() check still applies."""
+        with self.transaction():
+            action = self.action(action_id)
+            if action["status"] != "proposed":
+                return {"action": action_id, "outcome": "skipped", "detail": action["status"]}
+            decision = self._autonomy_for(action)
+            self.db.execute("UPDATE actions SET autonomy=? WHERE id=?",
+                            (json.dumps(decision), action_id))
+            actor = f"policy:v{decision['policy_version']}/rule:{decision['rule_id']}"
+            if decision["mode"] == "approve":
+                return {"action": action_id, "outcome": "owner",
+                        "detail": "; ".join(decision["reasons"])}
+            if decision["mode"] == "blocked":
+                self._open_escalation_locked(
+                    self.case_id(action["invoice_id"]), "blocked_by_policy",
+                    f"A {action['kind'].replace('_', ' ')} was blocked by policy rule "
+                    f"{decision['rule_id']}. Decide the next step.",
+                    json.loads(action["evidence_ids"]), "policy", key=action_id)
+                self._reject_locked(action_id, actor, "Blocked by policy")
+                return {"action": action_id, "outcome": "blocked", "detail": decision["rule_id"]}
+            if self.autonomy_status()["paused"]:
+                return {"action": action_id, "outcome": "paused", "detail": "autonomy paused by owner"}
+            self.db.execute("SAVEPOINT autonomy_send")
+            try:
+                self.validate_action(action)
+                self._approve_locked(action_id, actor, action["payload_hash"])
+                self._execute_locked(action_id, actor)
+            except Conflict as exc:
+                # Undo a half-done approval, then retire the plan so it is not
+                # retried every round; the next cadence day or the owner moves on.
+                self.db.execute("ROLLBACK TO autonomy_send")
+                self._reject_locked(action_id, actor, f"No longer valid: {str(exc)[:200]}")
+                return {"action": action_id, "outcome": "invalid", "detail": str(exc)}
+            finally:
+                self.db.execute("RELEASE autonomy_send")
+        return {"action": action_id, "outcome": "queued", "detail": decision["rule_id"]}
+
+    def preview_policy(self, autonomy_rules):
+        """How a draft rule list would treat each open case's next step now."""
+        self._check_rules(autonomy_rules)
+        counts = {"open_cases": 0, "auto": 0, "approve": 0, "blocked": 0}
+        version = (self.policy() or {"version": 0})["version"] + 1  # as if saved next
+        for row in self.cases():
+            if row["state"] == "resolved":
+                continue
+            invoice = self.invoice(row["invoice_id"])
+            evidence_count = self.db.execute("SELECT COUNT(*) FROM evidence WHERE invoice_id=?",
+                                             (invoice["id"],)).fetchone()[0]
+            kind = ("request_information" if invoice["disputed"] or evidence_count == 0
+                    else "collection_reminder")
+            mode = self._evaluate_rules(autonomy_rules, version, kind, invoice, evidence_count,
+                                        row["open_escalations"], "orchestrator",
+                                        invoice["outstanding_cents"])["mode"]
+            counts["open_cases"] += 1
+            counts[mode] += 1
+        return counts
+
+    # --- Milestone 5: escalations and event application -----------------
+
+    def open_escalation(self, case_id, reason, question, evidence_ids, raised_by, key):
+        """Ask the owner. `key` makes it idempotent: the same cause escalates
+        once. Returns the escalation, or None for a resolved case."""
+        with self.transaction():
+            return self._open_escalation_locked(case_id, reason, question, evidence_ids,
+                                                raised_by, key)
+
+    def _open_escalation_locked(self, case_id, reason, question, evidence_ids, raised_by, key):
+        escalation_id = "esc-" + hashlib.sha256(f"{case_id}:{reason}:{key}".encode()).hexdigest()[:16]
+        prior = self.db.execute("SELECT * FROM escalations WHERE id=?", (escalation_id,)).fetchone()
+        if prior:
+            return self._escalation_out(prior)
+        invoice_id = self._case_row(case_id)["invoice_id"]
+        if self._derive_state(invoice_id) == "resolved":
+            return None
+        self.db.execute(
+            "INSERT INTO escalations(id, case_id, reason, question, evidence_ids, raised_by, "
+            "created_at) VALUES(?,?,?,?,?,?,?)",
+            (escalation_id, case_id, reason, question[:1000], json.dumps(evidence_ids),
+             raised_by, self.clock()))
+        self._record(invoice_id, f"escalation:{escalation_id}:opened", f"escalated_{reason}")
+        self._activity("escalation_opened", raised_by, f"Needs you: {question[:200]}",
+                       case_id=case_id, ref=escalation_id)
+        row = self.db.execute("SELECT * FROM escalations WHERE id=?", (escalation_id,)).fetchone()
+        return self._escalation_out(row)
+
+    @staticmethod
+    def _cad(cents):
+        return f"CAD {cents // 100:,}.{cents % 100:02d}"
+
+    def apply_event(self, event_id):
+        """Apply one stored event through the normal core method, then mark it
+        routed. Each method is idempotent, so a crash between the two steps
+        re-applies harmlessly. A refused event is recorded, never retried."""
+        row = self.db.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()
+        if row is None:
+            raise NotFound("Unknown event")
+        event = self._event_out(row)
+        if event["routed_at"] is not None:
+            return {"event": event_id, "kind": event["kind"], "status": "already_applied",
+                    "detail": None}
+        p = event["payload"]
+        handlers = {
+            "invoice_created": lambda: self.create_invoice(p["invoice_id"], p["customer"],
+                                                           p["total_cents"], due_at=p["due_at"]),
+            "contact_set": lambda: self.set_contact(p["invoice_id"], p["address"]),
+            "evidence_added": lambda: self.add_evidence(p["evidence_id"], p["invoice_id"], p["body"]),
+            "settlement_received": lambda: self.record_settlement(
+                p["settlement_id"], p["invoice_id"], p["amount_cents"], p["currency"]),
+            "dispute_changed": lambda: self.set_disputed(p["invoice_id"], p["disputed"]),
+            "reply_received": lambda: self.record_reply(p["evidence_id"], p["invoice_id"], p["body"]),
+        }
+        summaries = {
+            "invoice_created": lambda: f"Invoice {p['invoice_id']} for {self._cad(p['total_cents'])} "
+                                       f"to {p['customer']}",
+            "contact_set": lambda: f"Contact on file for {p['invoice_id']}",
+            "evidence_added": lambda: f"Evidence {p['evidence_id']} added to {p['invoice_id']}",
+            "settlement_received": lambda: f"Payment of {self._cad(p['amount_cents'])} received "
+                                           f"for {p['invoice_id']}",
+            "dispute_changed": lambda: f"Invoice {p['invoice_id']} "
+                                       f"{'disputed' if p['disputed'] else 'no longer disputed'}",
+            "reply_received": lambda: f"Customer reply {p['evidence_id']} on {p['invoice_id']} "
+                                      "(untrusted text)",
+        }
+        status, detail = "applied", None
+        try:
+            handlers[event["kind"]]()
+        except (Conflict, InvalidInput, NotFound) as exc:
+            status, detail = "rejected", str(exc)
+        invoice_id = p.get("invoice_id")
+        case_id = self.case_id(invoice_id) if invoice_id else None
+        with self.transaction():
+            self.db.execute("UPDATE events SET routed_at=? WHERE id=? AND routed_at IS NULL",
+                            (self.clock(), event_id))
+            known_case = case_id and self.db.execute("SELECT 1 FROM cases WHERE id=?",
+                                                     (case_id,)).fetchone()
+            self._activity("event_ingested", f"source:{event['source']}",
+                           summaries[event["kind"]]() + ("" if status == "applied"
+                                                         else f" (not applied: {detail})"),
+                           case_id=case_id if known_case else None, ref=event_id,
+                           synthetic=event["synthetic"])
+            # Escalate in the same transaction that marks the event applied,
+            # so a crash cannot consume the event and lose the escalation.
+            if known_case:
+                evidence = [e["id"] for e in self.evidence(invoice_id)]
+                if status == "rejected":
+                    self._open_escalation_locked(
+                        case_id, "event_rejected",
+                        f"An incoming {event['kind'].replace('_', ' ')} could not be applied: "
+                        f"{detail[:300]}. Review it.", evidence, "orchestrator", key=event_id)
+                elif event["kind"] == "dispute_changed" and p["disputed"]:
+                    self._open_escalation_locked(
+                        case_id, "dispute",
+                        f"The customer disputes invoice {invoice_id}. Automatic reminders stop "
+                        "while it is disputed. Review the evidence and decide the next step.",
+                        evidence, "orchestrator", key=event_id)
+        return {"event": event_id, "kind": event["kind"], "status": status, "detail": detail,
+                "case_id": case_id if known_case else None}
 
     # --- Milestone 5: activity, autonomy switch, escalations, agents -----
 
@@ -1442,7 +1719,7 @@ class FinanceCore:
         self.db.execute(
             "INSERT INTO activity(kind, actor, case_id, ref, summary, synthetic, created_at) "
             "VALUES(?,?,?,?,?,?,?)",
-            (kind, actor, case_id, ref, summary, int(bool(synthetic)), self.clock()))
+            (kind, actor, case_id, ref, summary[:300], int(bool(synthetic)), self.clock()))
 
     def activity(self, after=0, limit=100):
         if type(after) is not int or after < 0:
@@ -1501,6 +1778,8 @@ class FinanceCore:
             self.db.execute(
                 "UPDATE escalations SET resolved_at=?, resolved_by=?, resolution_note=? WHERE id=?",
                 (self.clock(), resolved_by, note, escalation_id))
+            self._record(self._case_row(row["case_id"])["invoice_id"],
+                         f"escalation:{escalation_id}:resolved", "escalation_resolved")
             self._activity("escalation_resolved", resolved_by, "Escalation resolved by the owner",
                            case_id=row["case_id"], ref=escalation_id)
             row = self.db.execute("SELECT * FROM escalations WHERE id=?",
@@ -1609,6 +1888,10 @@ class FinanceCore:
     def agents(self):
         return [self._agent_info(name) for name in AGENTS]
 
+    def agent_paused(self, name):
+        row = self.db.execute("SELECT paused FROM agent_controls WHERE name=?", (name,)).fetchone()
+        return bool(row and row["paused"])
+
     def set_agent_paused(self, name, paused, changed_by="owner"):
         if name not in AGENTS:
             raise NotFound("Unknown agent")
@@ -1624,7 +1907,48 @@ class FinanceCore:
                                ref=f"agent:{name}")
         return self._agent_info(name)
 
+    def ensure_job(self, job_id, invoice_id, kind, ref, due_at, status="pending", detail=None):
+        """Create a job once (IDs come from their cause). True if it is new."""
+        now = self.clock()
+        with self.transaction():
+            cursor = self.db.execute(
+                "INSERT OR IGNORE INTO jobs(id,invoice_id,kind,ref,due_at,status,detail,created_at,"
+                "updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (job_id, invoice_id, kind, ref, due_at, status, detail, now, now))
+            return cursor.rowcount == 1
+
+    def actions_in_flight(self, invoice_id):
+        """Actions not yet delivered: proposed, approved or queued. A delivered
+        reminder that waits for payment does not block the next cadence step."""
+        return self.db.execute(
+            "SELECT COUNT(*) FROM actions WHERE invoice_id=? AND status IN "
+            "('proposed', 'approved', 'queued')", (invoice_id,)).fetchone()[0]
+
+    def job_exists(self, job_id):
+        return self.db.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone() is not None
+
+    def investigate_jobs(self, invoice_id=None, status=None):
+        sql, args = "SELECT * FROM jobs WHERE kind='investigate'", []
+        if invoice_id is not None:
+            sql, args = sql + " AND invoice_id=?", [*args, invoice_id]
+        if status is not None:
+            sql, args = sql + " AND status=?", [*args, status]
+        return [dict(r) for r in self.db.execute(sql + " ORDER BY due_at, id", args)]
+
     # --- demo clock playback (Milestone 5) -------------------------------
+
+    def tick_playback(self, real_seconds):
+        """Demo only: while playing, move the simulated clock by speed x elapsed
+        real time. Returns the simulated seconds added (0 when paused)."""
+        if not self.simulated_time or real_seconds <= 0:
+            return 0
+        playback = self.db.execute("SELECT playing, speed FROM sim_playback").fetchone()
+        if not playback["playing"]:
+            return 0
+        seconds = int(playback["speed"] * 60 * real_seconds)
+        if seconds:
+            self.advance_simulated_time(seconds)
+        return seconds
 
     def clock_status(self):
         if not self.simulated_time:
@@ -1674,6 +1998,11 @@ class FinanceCore:
                 return "awaiting_approval"
         if any(a["status"] in _WAITING for a in actions):
             return "awaiting_external_outcome"
+        if current["outstanding_cents"] == 0 and not current["disputed"]:
+            return "resolved"  # paid in full: _record closes any open escalation
+        if self.db.execute("SELECT 1 FROM escalations WHERE case_id=? AND resolved_at IS NULL",
+                           (self.case_id(invoice_id),)).fetchone():
+            return "escalated"
         if current["disputed"]:
             return "needs_information"
         if current["outstanding_cents"] == 0:
@@ -1702,6 +2031,10 @@ class FinanceCore:
                 raise Conflict(f"Case cannot move from {prior_state} to {next_state}")
             if next_state == "resolved" and prior_state != "resolved":
                 self._verify_closure(case_id, invoice_id, now)
+                self.db.execute(
+                    "UPDATE escalations SET resolved_at=?, resolved_by='system', "
+                    "resolution_note='closed: the case was paid in full' "
+                    "WHERE case_id=? AND resolved_at IS NULL", (now, case_id))
                 # Paid in full: waiting re-investigations have nothing left to do.
                 self.db.execute(
                     "UPDATE jobs SET status='done', detail='not needed: case resolved', updated_at=? "
@@ -1716,5 +2049,9 @@ class FinanceCore:
             "VALUES(?,?,?,?,?,?,?)",
             (case_id, event_id, prior_state, next_state, reason,
              self.invoice(invoice_id)["version"], now))
+        if prior_state is not None and prior_state != next_state:
+            self._activity("case_state_changed", "system",
+                           f"Case moved from {prior_state} to {next_state} ({reason})",
+                           case_id=case_id, ref=event_id)
         self.db.execute("UPDATE cases SET state=?, version=version+1, updated_at=? WHERE id=?",
                         (next_state, now, case_id))

@@ -296,9 +296,14 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
         return fc.set_policy(**body.core_args(), created_by=owner)
 
     @app.post("/policy/preview", response_model=schemas.PolicyPreviewOut, responses=schemas.OWNER_ERRORS)
-    def preview_policy(body: PolicyIn, _: str = Depends(require_owner)):
+    def preview_policy(body: PolicyIn, _: str = Depends(require_owner),
+                       fc: FinanceCore = Depends(core)):
         """How many open cases a draft policy would handle automatically. Saves nothing."""
-        _not_built("1a")
+        # Omitted autonomy_rules = the current policy's rules.
+        rules = body.core_args()["autonomy_rules"]
+        if rules is None:
+            rules = (fc.policy() or {"autonomy_rules": []})["autonomy_rules"]
+        return fc.preview_policy(rules)
 
     # --- Milestone 5: the owner's overview and controls ------------------
 

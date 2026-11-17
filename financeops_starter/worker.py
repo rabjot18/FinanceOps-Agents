@@ -1,4 +1,5 @@
-"""FinanceOps worker (Milestone 3): delivers queued messages and runs due jobs.
+"""FinanceOps worker (Milestones 3 and 5): orchestrates, delivers queued messages
+and runs due jobs.
 
     .venv/bin/python worker.py              # one round, then exit
     .venv/bin/python worker.py --loop       # keep going every few seconds
@@ -13,6 +14,11 @@ Delivery rules:
   whether it arrived BEFORE sending again. The same idempotency key is used
   every time, so even a repeat is stored once.
 - A delivered message changes no money. Only a settlement does.
+
+Milestone 5: each round starts with orchestrator.run_cycle (apply due events,
+reminder cadence, autonomy rules) and runs the autonomy rules again after
+investigations. In the demo, a playing simulated clock moves forward between
+rounds (speed x elapsed real time).
 """
 import argparse
 import logging
@@ -20,6 +26,7 @@ import os
 import sys
 import time
 
+import orchestrator
 from adapters import DispatchRejected, DispatchTimeout, SimulatedInbox
 from core import Conflict, FinanceCore
 
@@ -35,6 +42,15 @@ def run_once(core, adapter, investigator_factory=None):
     """
     result = {"sent": [], "unknown": [], "cancelled": [], "failed": [],
               "follow_ups_elapsed": [], "investigations": [], "errors": []}
+    # Orchestration first, so a message queued by an automatic rule is
+    # delivered in this same round. Its summary goes to the log; the owner
+    # sees it in the activity feed. (The returned shape is a frozen contract.)
+    try:
+        log.debug("orchestration: %s", orchestrator.run_cycle(
+            core, has_model=investigator_factory is not None))
+    except Exception as exc:
+        log.exception("orchestration failed")
+        result["errors"].append({"item": "orchestrator", "error": type(exc).__name__})
     # One broken item must not stop the others: log it, report it, carry on.
     # An item left "sending" is picked up again after SENDING_STALE_SECONDS.
     for item_id in core.dispatch_candidates():
@@ -48,11 +64,16 @@ def run_once(core, adapter, investigator_factory=None):
             if job["kind"] == "settlement_check":
                 if core.run_settlement_check(job["id"])["elapsed"]:
                     result["follow_ups_elapsed"].append(job["id"])
-            elif investigator_factory is not None:
+            elif (job["kind"] == "investigate" and investigator_factory is not None
+                  and not core.agent_paused("collections")):
                 _investigate(core, investigator_factory, job["id"], result)
         except Exception as exc:
             log.exception("job %s failed", job["id"])
             result["errors"].append({"job": job["id"], "error": type(exc).__name__})
+    if result["investigations"]:
+        # The agent's new proposals: apply the autonomy rules now; delivery
+        # follows next round.
+        orchestrator.run_autonomy(core)
     result["investigations_waiting"] = core.waiting_jobs("investigate")
     return result
 
@@ -129,9 +150,13 @@ def main():
         client = anthropic.Anthropic(timeout=CLIENT_TIMEOUT_SECONDS, max_retries=CLIENT_MAX_RETRIES)
         factory = lambda core: Investigator(core, client)  # noqa: E731
 
+    last_round = time.monotonic()
     while True:
         core = FinanceCore(path, simulated_time=simulated)
         try:
+            now = time.monotonic()
+            core.tick_playback(now - last_round)  # demo: a playing clock moves on
+            last_round = now
             log.info("round: %s", run_once(core, adapter, factory))
         except Exception:
             if not args.loop:
