@@ -71,9 +71,16 @@ def run_once(core, adapter, investigator_factory=None):
             log.exception("job %s failed", job["id"])
             result["errors"].append({"job": job["id"], "error": type(exc).__name__})
     if result["investigations"]:
-        # The agent's new proposals: apply the autonomy rules now; delivery
-        # follows next round.
+        # The agent's new proposals: apply the autonomy rules and deliver what
+        # they queued in this same round, so a short approval window cannot
+        # lapse while waiting for the next round.
         orchestrator.run_autonomy(core)
+        for item_id in core.dispatch_candidates():
+            try:
+                _deliver(core, adapter, item_id, result)
+            except Exception as exc:
+                log.exception("delivery of %s failed", item_id)
+                result["errors"].append({"item": item_id, "error": type(exc).__name__})
     result["investigations_waiting"] = core.waiting_jobs("investigate")
     return result
 

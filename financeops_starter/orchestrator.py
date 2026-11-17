@@ -119,9 +119,12 @@ def _cadence_step(core, row, day, policy, job_id):
                              "(the policy limit) and is still unpaid. Decide the next step.",
                              evidence, "orchestrator", key=job_id)
         return "escalated: reminder limit"
-    needs_judgement = invoice["settled_cents"] > 0 or core.investigate_jobs(invoice_id)
+    needs_judgement = (invoice["settled_cents"] > 0
+                       or core.investigate_jobs(invoice_id, status="pending")
+                       or core.has_unreviewed_evidence(invoice_id))
     if needs_judgement:
-        # A partial payment or a customer reply: not routine, the agent looks.
+        # A partial payment, a customer reply or a new document: not routine,
+        # the agent (or, without a model budget, the owner) looks first.
         core.ensure_job(f"investigate:{job_id}", invoice_id, "investigate", job_id, core.clock())
         return "needs judgement: investigation queued"
     action = core.propose(f"auto-{invoice_id}-d{day}", invoice_id, "collection_reminder", evidence,

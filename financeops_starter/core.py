@@ -1924,6 +1924,25 @@ class FinanceCore:
             "SELECT COUNT(*) FROM actions WHERE invoice_id=? AND status IN "
             "('proposed', 'approved', 'queued')", (invoice_id,)).fetchone()[0]
 
+    def has_unreviewed_evidence(self, invoice_id):
+        """True if a document or reply arrived after the first one (the
+        original contract) and nobody has looked since: no finished agent run,
+        resolved escalation, or approve/reject decision on the case after it.
+        New evidence can change the story (e.g. "paid under another reference"),
+        so the cadence must not keep chasing on autopilot."""
+        case_id = self.case_id(invoice_id)
+        evidence = [r["seq"] for r in self.db.execute(
+            "SELECT seq FROM case_events WHERE case_id=? AND reason IN "
+            "('evidence_added', 'customer_reply_received') ORDER BY seq", (case_id,))]
+        if len(evidence) < 2:
+            return False
+        reviewed = self.db.execute(
+            "SELECT MAX(seq) FROM case_events WHERE case_id=? AND (reason IN "
+            "('investigation_proposed', 'investigation_no_proposal', 'investigation_escalated', "
+            "'escalation_resolved', 'action_approved', 'action_rejected'))",
+            (case_id,)).fetchone()[0] or 0
+        return evidence[-1] > reviewed
+
     def job_exists(self, job_id):
         return self.db.execute("SELECT 1 FROM jobs WHERE id=?", (job_id,)).fetchone() is not None
 

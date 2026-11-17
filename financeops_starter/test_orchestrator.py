@@ -341,6 +341,62 @@ class ReviewFindingTests(OrchestratorTestCase):
         self.assertEqual((none["auto"], none["approve"]), (0, 1))
 
 
+class IntegrationFindingTests(OrchestratorTestCase):
+    """Found by replaying a generated business (eval_run) against the orchestrator."""
+
+    def test_a_new_document_stops_the_autopilot_until_someone_looks(self):
+        self.business(due_days_ago=0)
+        self.event("evidence_added", "g-1:bank", evidence_id="g-1-bank", invoice_id="g-1",
+                   body="Bank note: paid in full under reference INV-1O0 (typo).")
+        self.round()
+        self.core.advance_simulated_time(4 * DAY)
+        self.round()
+        self.assertEqual(self.inbox.messages(), [])
+        self.assertEqual(self.core.job("cadence:g-1:d3")["detail"],
+                         "needs judgement: investigation queued")
+        self.assertEqual([e["escalation"]["reason"] for e in self.core.attention()["escalations"]],
+                         ["needs_judgement"])
+
+    def test_the_original_contract_alone_is_routine(self):
+        self.business()
+        self.assertFalse(self.core.has_unreviewed_evidence("g-1"))
+        self.round()
+        self.assertEqual(len(self.inbox.messages()), 1)
+
+    def test_a_reviewed_document_lets_the_cadence_continue(self):
+        self.business(due_days_ago=0)
+        self.event("evidence_added", "g-1:note", evidence_id="g-1-note", invoice_id="g-1",
+                   body="Customer asked for the invoice PDF again.")
+        self.round()
+        self.core.advance_simulated_time(4 * DAY)
+        self.round()  # escalated: needs judgement
+        esc = self.core.attention()["escalations"][0]["escalation"]
+        self.core.resolve_escalation(esc["id"], note="Harmless; keep chasing")
+        self.assertFalse(self.core.has_unreviewed_evidence("g-1"))
+        self.core.advance_simulated_time(4 * DAY)  # day 8: cadence day 7
+        self.round()
+        self.assertEqual(len(self.inbox.messages()), 1)
+
+    def test_messages_queued_after_an_investigation_go_out_in_the_same_round(self):
+        self.core.set_policy(60, 7, 2, daily_model_budget_cents=100, created_by="test")
+        self.business(due_days_ago=0)
+        self.event("reply_received", "g-1:reply", evidence_id="g-1-r1", invoice_id="g-1",
+                   body="Which invoice is this about?")
+
+        class Agent:
+            def __init__(self, core):
+                self.core = core
+
+            def investigate(self, case_id):
+                run = self.core.start_agent_run(case_id, "fake")
+                action = self.core.propose("agent-q", "g-1", "request_information", ["g-1-c"],
+                                           proposed_by=f"agent:{run}")
+                return self.core.finish_agent_run(run, "proposed", action_id=action["id"])
+        result = self.round(Agent)
+        self.assertEqual(result["sent"], ["agent-q"])
+        self.assertEqual(self.core.action("agent-q")["status"], "dispatched")
+
+
 class PreviewAndClockTests(OrchestratorTestCase):
     def test_policy_preview_counts_open_cases(self):
         self.business("g-1", total_cents=100_000)
