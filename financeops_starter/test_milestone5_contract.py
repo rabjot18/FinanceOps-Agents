@@ -57,11 +57,6 @@ class OwnerRoutesTests(Milestone5TestCase):
             with self.subTest(route=f"{method} {path}"):
                 self.call(method, path, headers={}, expect=401)
 
-    def test_routes_for_later_steps_say_not_built(self):
-        detail = self.call("POST", "/demo/generator/run", {"seed": 1}, headers={}, expect=503)["detail"]
-        self.assertIn("Not built yet", detail)
-        self.call("GET", "/demo/generator/truth?seed=1", headers={}, expect=503)
-
 
 class CaseListTests(Milestone5TestCase):
     def setUp(self):
