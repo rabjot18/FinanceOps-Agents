@@ -174,8 +174,9 @@ const STEP_OF: Record<Action['status'], number> = {
   failed: 2,
   follow_up_due: 3,
   executed_simulated: 3,
+  superseded: 0, // a newer plan replaced it before approval
 };
-const STOPPED: ReadonlySet<Action['status']> = new Set(['rejected', 'cancelled', 'failed']);
+const STOPPED: ReadonlySet<Action['status']> = new Set(['rejected', 'cancelled', 'failed', 'superseded']);
 
 function Stepper({ status }: { status: Action['status'] }) {
   const current = STEP_OF[status];

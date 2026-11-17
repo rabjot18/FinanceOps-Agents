@@ -18,13 +18,15 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
     """core: the per-request FinanceCore dependency; require_owner(authorization)
     raises unless the owner token matches; get_model_client() returns the model client."""
     # Imported here: api.py imports this module, and the request models live there.
-    from api import ContactIn, DisputeIn, EvidenceIn, InvoiceIn, SettlementIn, WorkerRunIn, _invoice_out
+    from api import (ClockIn, ContactIn, DisputeIn, EvidenceIn, GeneratorIn, InvoiceIn,
+                     SettlementIn, WorkerRunIn, _invoice_out, _not_built)
 
     demo = APIRouter(prefix="/demo", tags=["demo: synthetic events"])
 
     @demo.post("/invoices", response_model=schemas.InvoiceOut)
     def demo_invoice(body: InvoiceIn, fc: FinanceCore = Depends(core)):
-        return _invoice_out(fc.create_invoice(body.invoice_id, body.customer, body.total_cents))
+        return _invoice_out(fc.create_invoice(body.invoice_id, body.customer, body.total_cents,
+                                              due_at=body.due_at))
 
     @demo.post("/evidence", response_model=schemas.EvidenceListOut)
     def demo_evidence(body: EvidenceIn, fc: FinanceCore = Depends(core)):
@@ -84,5 +86,27 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
     def demo_load_scenario(name: str, fc: FinanceCore = Depends(core)):
         """Add a named synthetic scenario's cases. Repeatable; deletes nothing."""
         return {"scenario": name, "case_ids": scenarios.load(fc, name)}
+
+    # --- Milestone 5: simulated clock playback and the business generator ---
+
+    @demo.get("/clock", response_model=schemas.ClockOut)
+    def demo_clock(fc: FinanceCore = Depends(core)):
+        return fc.clock_status()
+
+    @demo.post("/clock", response_model=schemas.ClockOut)
+    def demo_set_clock(body: ClockIn, fc: FinanceCore = Depends(core)):
+        """play / pause / speed (simulated minutes per real second). While
+        playing, the worker loop moves the SIMULATED clock forward."""
+        return fc.set_playback(body.action, body.speed)
+
+    @demo.post("/generator/run", response_model=schemas.GeneratorRunOut)
+    def demo_generate(body: GeneratorIn, fc: FinanceCore = Depends(core)):
+        """Generate a fictional business (same seed, same data) and schedule its timeline."""
+        _not_built("1b")
+
+    @demo.get("/generator/truth", response_model=schemas.TruthOut)
+    def demo_truth(seed: int, fc: FinanceCore = Depends(core)):
+        """The planted problems and their expected outcomes, for evaluation."""
+        _not_built("1b")
 
     return demo

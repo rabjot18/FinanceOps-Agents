@@ -8,7 +8,9 @@
 | 1 — deterministic core and persistence | **Done** | `cases` + append-only `case_events`, schema migrations, FastAPI `api.py`, owner-token approval, `/demo/*` synthetic routes |
 | 2 — agent investigation | **Done (live check pending)** | `agent.py` Claude investigator: read tools + `propose_action`, case-bound, 12-call / 5-minute budget, stored traces, `POST /cases/{id}/investigate` (owner token) |
 | 3 — actions, waiting, verification | **Done** | Code-written messages, hash-bound expiring approvals, stored policy + contacts, transactional outbox, `worker.py`, simulated inbox, follow-up and re-investigation jobs, proven closure |
-| 4–7 | Not started | |
+| 4 — visible product and parallel development | **Done** | Owner console (React + TypeScript + Vite), six synthetic demo scenarios, Playwright e2e, layout redesign; commits 7704fc9, 8a382e4, d931d48, 5f0b13d |
+| 5 — autonomous receivables operator | **In progress: step 0 done** | See `MILESTONE_5_PLAN.md`. Step 0: contract frozen (15 new routes; 3 are 503 stubs for steps 1a/1b), schema V5 (events, activity, escalations, kill switch, agent controls, briefings, demo playback, generator runs; invoice due dates; policy autonomy rules), 16 new tests. Next: 1a orchestrator/autonomy, 1b generator, 1c UI, in parallel. Vendor bills and cash move to later milestones. |
+| 6–7 | Not started | |
 
 Milestone 3 evidence: 142 tests pass (91 earlier ones, a handful updated for the
 two deliberate contract changes below; 23 new in `test_outbox.py`, 25 new in

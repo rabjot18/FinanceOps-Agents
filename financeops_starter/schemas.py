@@ -1,4 +1,4 @@
-"""Response shapes of the HTTP API (Milestone 4): the frozen contract.
+"""Response shapes of the HTTP API (Milestones 4-5): the frozen contract.
 
 The frontend's TypeScript types are generated from the OpenAPI document these
 models produce (contracts/openapi.json). extra="forbid" means a field that
@@ -13,12 +13,19 @@ from typing import Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict
 
 CaseState = Literal["open", "needs_information", "awaiting_approval",
-                    "awaiting_external_outcome", "resolved"]
+                    "awaiting_external_outcome", "escalated", "resolved"]
 ActionKind = Literal["collection_reminder", "request_information"]
+# "superseded": a newer plan for the same case replaced it (kept, never deleted).
 ActionStatus = Literal["proposed", "approved", "rejected", "queued", "dispatched",
-                       "follow_up_due", "executed_simulated", "cancelled", "failed"]
+                       "follow_up_due", "executed_simulated", "cancelled", "failed",
+                       "superseded"]
 DeliveryStatus = Literal["pending", "sending", "unknown", "sent", "failed", "cancelled"]
 RunStatus = Literal["running", "proposed", "no_proposal", "escalated", "failed"]
+AgentName = Literal["collections", "briefing"]
+AutonomyMode = Literal["auto", "approve", "blocked"]
+JobKind = Literal["settlement_check", "investigate", "cadence_step", "briefing"]
+# Who moved a case last: the owner, a policy rule (automatic), or nobody yet.
+HandledBy = Literal["owner", "policy", "agent", "none"]
 
 
 class _Out(BaseModel):
@@ -102,10 +109,17 @@ class CaseSummary(_Out):
     outstanding_cents: int
     currency: str
     pending_actions: int  # proposed or approved, waiting for the owner
+    due_at: Optional[str]
+    days_overdue: Optional[int]  # None when not due, paid, or no due date
+    open_escalations: int
+    needs_owner: bool  # pending actions or open escalations
+    handled_by: HandledBy
 
 
 class CaseListOut(_Out):
     cases: List[CaseSummary]
+    total: int  # matching cases across all pages
+    next_cursor: Optional[str]  # pass back as ?cursor= for the next page
 
 
 class InvoiceOut(_Out):
@@ -118,6 +132,7 @@ class InvoiceOut(_Out):
     settled_cents: int
     outstanding_cents: int
     state: Literal["open", "needs_information", "resolved"]
+    due_at: Optional[str]
     case_id: Optional[str] = None
 
 
@@ -160,6 +175,15 @@ class Approval(_Out):
     expired: Optional[bool] = None  # set for approvals only
 
 
+class AutonomyDecision(_Out):
+    """How the policy classified an action, evaluated by code (never the model)."""
+    mode: AutonomyMode
+    rule_id: Optional[str]  # None: no rule matched, so the owner decides
+    policy_version: int
+    reasons: List[str]  # short code-written reasons, e.g. "invoice disputed"
+    decided_at: str
+
+
 class Delivery(_Out):
     status: DeliveryStatus
     attempts: int
@@ -185,18 +209,44 @@ class ActionOut(_Out):
     executed_at: Optional[str]
     approval: Optional[Approval]
     delivery: Optional[Delivery]
+    autonomy: Optional[AutonomyDecision]  # None for actions from before Milestone 5
+    superseded_by: Optional[str]  # the newer action that replaced this one
     simulated: bool = True
 
 
 # --- policy, contacts, jobs ---------------------------------------------
+
+class AutonomyRule(_Out):
+    """One autonomy rule. Rules are checked in order; the first match decides.
+    No match means the owner approves."""
+    id: str
+    action_kind: ActionKind
+    mode: AutonomyMode
+    max_amount_cents: Optional[int]  # None: any amount
+    require_undisputed: bool
+    require_evidence: bool  # at least one evidence document on file
+    description: str
+
 
 class PolicyOut(_Out):
     version: int
     approval_ttl_minutes: int
     follow_up_days: int
     max_reminders: int
+    # Empty for policies stored before Milestone 5: nothing runs automatically.
+    autonomy_rules: List[AutonomyRule]
+    cadence_days: List[int]  # reminder days after the due date, e.g. [3, 7, 14]
+    daily_model_budget_cents: int  # 0: no automatic model calls
     created_by: str
     created_at: str
+
+
+class PolicyPreviewOut(_Out):
+    """What a draft policy would do to the open cases right now."""
+    open_cases: int
+    auto: int
+    approve: int
+    blocked: int
 
 
 class ContactOut(_Out):
@@ -210,7 +260,7 @@ class ContactOut(_Out):
 class JobOut(_Out):
     id: str
     invoice_id: str
-    kind: Literal["settlement_check", "investigate"]
+    kind: JobKind
     ref: Optional[str]
     due_at: str
     status: Literal["pending", "running", "done", "failed"]
@@ -230,6 +280,7 @@ class FindingOut(_Out):
 class AgentRunSummary(_Out):
     id: str
     case_id: str
+    agent: AgentName
     model: str
     served_model: Optional[str]
     status: RunStatus
@@ -262,6 +313,127 @@ class AgentRunOut(AgentRunSummary):
     calls: List[ToolCallOut]
 
 
+# --- autonomy, escalations, activity, briefings, agents (Milestone 5) ---
+
+class AutonomyStatus(_Out):
+    paused: bool  # the owner's kill switch: nothing executes automatically
+    changed_by: Optional[str]
+    changed_at: Optional[str]
+    reason: Optional[str]
+
+
+class EscalationOut(_Out):
+    id: str
+    case_id: str
+    reason: str  # code, e.g. "dispute", "replan_limit", "budget_exceeded"
+    question: str  # what the owner is asked; may quote model text: plain text only
+    evidence_ids: List[str]
+    raised_by: str  # "orchestrator", "policy", or "agent:<run id>"
+    created_at: str
+    resolved_at: Optional[str]
+    resolved_by: Optional[str]
+    resolution_note: Optional[str]
+
+
+class AttentionApproval(_Out):
+    case_id: str
+    customer: str
+    outstanding_cents: int
+    currency: str
+    action: ActionOut
+
+
+class AttentionEscalation(_Out):
+    customer: str
+    outstanding_cents: int
+    currency: str
+    escalation: EscalationOut
+
+
+class AttentionOut(_Out):
+    """The owner's "Needs you" queue, oldest first."""
+    approvals: List[AttentionApproval]
+    escalations: List[AttentionEscalation]
+    autonomy: AutonomyStatus
+
+
+ActivityKind = Literal[
+    "event_ingested", "case_state_changed", "action_proposed", "action_auto_approved",
+    "action_approved", "action_rejected", "action_superseded", "message_queued",
+    "message_sent", "message_cancelled", "agent_run_started", "agent_run_finished",
+    "escalation_opened", "escalation_resolved", "briefing_published",
+    "autonomy_paused", "autonomy_resumed", "agent_paused", "agent_resumed",
+    "policy_changed"]
+
+
+class ActivityItem(_Out):
+    seq: int
+    kind: ActivityKind
+    actor: str  # "owner", "policy:v<n>/rule:<id>", "agent:<name>", "worker", "orchestrator"
+    case_id: Optional[str]
+    ref: Optional[str]  # the action, run, escalation or event it is about
+    summary: str  # written by code from stored facts
+    synthetic: bool
+    created_at: str
+
+
+class ActivityOut(_Out):
+    items: List[ActivityItem]  # oldest first
+    cursor: int  # highest seq returned (or the one passed); pass back as ?after=
+
+
+class SummaryOut(_Out):
+    """Headline numbers, computed by the backend; the UI never adds them up."""
+    currency: str
+    outstanding_cents: int
+    overdue_cents: int
+    open_cases: int
+    overdue_cases: int
+    awaiting_owner: int  # approvals plus open escalations
+    auto_handled_7d: int  # actions approved by a policy rule in the last 7 days
+    resolved_7d: int
+    model_spend_today_cents: Optional[int]  # None until cost tracking exists
+    autonomy_paused: bool
+    now: str
+    simulated_time: bool
+
+
+class BriefingItem(_Out):
+    text: str  # model-written: plain text only
+    case_ids: List[str]
+    evidence_ids: List[str]
+
+
+class BriefingSection(_Out):
+    title: str
+    items: List[BriefingItem]
+
+
+class BriefingOut(_Out):
+    id: str
+    run_id: Optional[str]
+    period_start: str
+    period_end: str
+    headline: str
+    sections: List[BriefingSection]
+    created_at: str
+
+
+class AgentInfo(_Out):
+    name: AgentName
+    title: str
+    model: str
+    can_write: bool  # False: read-only agent
+    paused: bool
+    runs_today: int
+    outcomes_7d: Dict[str, int]  # run status -> count
+    last_run_at: Optional[str]
+
+
+class AgentListOut(_Out):
+    agents: List[AgentInfo]
+
+
 # --- the case workspace -------------------------------------------------
 
 class WorkspaceOut(_Out):
@@ -275,6 +447,8 @@ class WorkspaceOut(_Out):
     contact_on_file: bool
     sending_enabled: bool
     reminders_sent: int
+    escalations: List[EscalationOut]  # newest first, open and resolved
+    autonomy: AutonomyStatus
     now: str  # the server's clock (the simulated one in the demo)
     simulated_time: bool
 
@@ -340,3 +514,42 @@ class ScenarioLoadOut(_Out):
     scenario: str
     case_ids: List[str]
     simulated: bool = True
+
+
+class ClockOut(_Out):
+    now: str
+    simulated: bool
+    playing: bool  # while playing, the worker loop moves the clock forward
+    speed: int  # simulated minutes per real second
+    offset_seconds: int
+
+
+ProblemKind = Literal[
+    "none", "late_payer", "partial_unexplained", "partial_agreed_credit", "disputed_work",
+    "missing_contract", "mistyped_reference", "promise_to_pay", "claims_paid",
+    "prompt_injection"]
+ExpectedOutcome = Literal["resolved", "reminded_automatically", "information_requested",
+                          "escalated", "owner_approval"]
+
+
+class GeneratorRunOut(_Out):
+    seed: int
+    months: int
+    customers: int
+    invoices: int
+    events_scheduled: int
+    first_event_at: str
+    last_event_at: str
+    simulated: bool = True
+
+
+class TruthItem(_Out):
+    invoice_id: str
+    problem: ProblemKind
+    expected: List[ExpectedOutcome]  # any of these counts as correct
+    note: str
+
+
+class TruthOut(_Out):
+    seed: int
+    items: List[TruthItem]

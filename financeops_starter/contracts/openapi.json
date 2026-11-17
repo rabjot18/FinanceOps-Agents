@@ -36,6 +36,16 @@
             ],
             "title": "Approved By"
           },
+          "autonomy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutonomyDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "anyOf": [
               {
@@ -142,10 +152,22 @@
               "follow_up_due",
               "executed_simulated",
               "cancelled",
-              "failed"
+              "failed",
+              "superseded"
             ],
             "title": "Status",
             "type": "string"
+          },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By"
           },
           "version": {
             "title": "Version",
@@ -168,9 +190,198 @@
           "executed_by",
           "executed_at",
           "approval",
-          "delivery"
+          "delivery",
+          "autonomy",
+          "superseded_by"
         ],
         "title": "ActionOut",
+        "type": "object"
+      },
+      "ActivityItem": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "event_ingested",
+              "case_state_changed",
+              "action_proposed",
+              "action_auto_approved",
+              "action_approved",
+              "action_rejected",
+              "action_superseded",
+              "message_queued",
+              "message_sent",
+              "message_cancelled",
+              "agent_run_started",
+              "agent_run_finished",
+              "escalation_opened",
+              "escalation_resolved",
+              "briefing_published",
+              "autonomy_paused",
+              "autonomy_resumed",
+              "agent_paused",
+              "agent_resumed",
+              "policy_changed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "seq",
+          "kind",
+          "actor",
+          "case_id",
+          "ref",
+          "summary",
+          "synthetic",
+          "created_at"
+        ],
+        "title": "ActivityItem",
+        "type": "object"
+      },
+      "ActivityOut": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "cursor"
+        ],
+        "title": "ActivityOut",
+        "type": "object"
+      },
+      "AgentInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "can_write": {
+            "title": "Can Write",
+            "type": "boolean"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "enum": [
+              "collections",
+              "briefing"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "outcomes_7d": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Outcomes 7D",
+            "type": "object"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "runs_today": {
+            "title": "Runs Today",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "title",
+          "model",
+          "can_write",
+          "paused",
+          "runs_today",
+          "outcomes_7d",
+          "last_run_at"
+        ],
+        "title": "AgentInfo",
+        "type": "object"
+      },
+      "AgentListOut": {
+        "additionalProperties": false,
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentInfo"
+            },
+            "title": "Agents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "agents"
+        ],
+        "title": "AgentListOut",
         "type": "object"
       },
       "AgentRunOut": {
@@ -186,6 +397,14 @@
               }
             ],
             "title": "Action Id"
+          },
+          "agent": {
+            "enum": [
+              "collections",
+              "briefing"
+            ],
+            "title": "Agent",
+            "type": "string"
           },
           "cache_read_tokens": {
             "title": "Cache Read Tokens",
@@ -328,6 +547,7 @@
         "required": [
           "id",
           "case_id",
+          "agent",
           "model",
           "served_model",
           "status",
@@ -362,6 +582,14 @@
               }
             ],
             "title": "Action Id"
+          },
+          "agent": {
+            "enum": [
+              "collections",
+              "briefing"
+            ],
+            "title": "Agent",
+            "type": "string"
           },
           "cache_read_tokens": {
             "title": "Cache Read Tokens",
@@ -486,6 +714,7 @@
         "required": [
           "id",
           "case_id",
+          "agent",
           "model",
           "served_model",
           "status",
@@ -623,6 +852,428 @@
         "title": "ApproveIn",
         "type": "object"
       },
+      "AttentionApproval": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ActionOut"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "customer": {
+            "title": "Customer",
+            "type": "string"
+          },
+          "outstanding_cents": {
+            "title": "Outstanding Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "case_id",
+          "customer",
+          "outstanding_cents",
+          "currency",
+          "action"
+        ],
+        "title": "AttentionApproval",
+        "type": "object"
+      },
+      "AttentionEscalation": {
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "customer": {
+            "title": "Customer",
+            "type": "string"
+          },
+          "escalation": {
+            "$ref": "#/components/schemas/EscalationOut"
+          },
+          "outstanding_cents": {
+            "title": "Outstanding Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "customer",
+          "outstanding_cents",
+          "currency",
+          "escalation"
+        ],
+        "title": "AttentionEscalation",
+        "type": "object"
+      },
+      "AttentionOut": {
+        "additionalProperties": false,
+        "description": "The owner's \"Needs you\" queue, oldest first.",
+        "properties": {
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionApproval"
+            },
+            "title": "Approvals",
+            "type": "array"
+          },
+          "autonomy": {
+            "$ref": "#/components/schemas/AutonomyStatus"
+          },
+          "escalations": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionEscalation"
+            },
+            "title": "Escalations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "approvals",
+          "escalations",
+          "autonomy"
+        ],
+        "title": "AttentionOut",
+        "type": "object"
+      },
+      "AutonomyDecision": {
+        "additionalProperties": false,
+        "description": "How the policy classified an action, evaluated by code (never the model).",
+        "properties": {
+          "decided_at": {
+            "title": "Decided At",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "auto",
+              "approve",
+              "blocked"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "policy_version": {
+            "title": "Policy Version",
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          }
+        },
+        "required": [
+          "mode",
+          "rule_id",
+          "policy_version",
+          "reasons",
+          "decided_at"
+        ],
+        "title": "AutonomyDecision",
+        "type": "object"
+      },
+      "AutonomyRule": {
+        "additionalProperties": false,
+        "description": "One autonomy rule. Rules are checked in order; the first match decides.\nNo match means the owner approves.",
+        "properties": {
+          "action_kind": {
+            "enum": [
+              "collection_reminder",
+              "request_information"
+            ],
+            "title": "Action Kind",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "max_amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Amount Cents"
+          },
+          "mode": {
+            "enum": [
+              "auto",
+              "approve",
+              "blocked"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "require_evidence": {
+            "title": "Require Evidence",
+            "type": "boolean"
+          },
+          "require_undisputed": {
+            "title": "Require Undisputed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "action_kind",
+          "mode",
+          "max_amount_cents",
+          "require_undisputed",
+          "require_evidence",
+          "description"
+        ],
+        "title": "AutonomyRule",
+        "type": "object"
+      },
+      "AutonomyRuleIn": {
+        "additionalProperties": false,
+        "properties": {
+          "action_kind": {
+            "enum": [
+              "collection_reminder",
+              "request_information"
+            ],
+            "title": "Action Kind",
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "max_amount_cents": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Amount Cents"
+          },
+          "mode": {
+            "enum": [
+              "auto",
+              "approve",
+              "blocked"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "require_evidence": {
+            "default": true,
+            "title": "Require Evidence",
+            "type": "boolean"
+          },
+          "require_undisputed": {
+            "default": true,
+            "title": "Require Undisputed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "action_kind",
+          "mode",
+          "description"
+        ],
+        "title": "AutonomyRuleIn",
+        "type": "object"
+      },
+      "AutonomyStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "changed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed At"
+          },
+          "changed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed By"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "paused",
+          "changed_by",
+          "changed_at",
+          "reason"
+        ],
+        "title": "AutonomyStatus",
+        "type": "object"
+      },
+      "BriefingItem": {
+        "additionalProperties": false,
+        "properties": {
+          "case_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Case Ids",
+            "type": "array"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "case_ids",
+          "evidence_ids"
+        ],
+        "title": "BriefingItem",
+        "type": "object"
+      },
+      "BriefingOut": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "period_end": {
+            "title": "Period End",
+            "type": "string"
+          },
+          "period_start": {
+            "title": "Period Start",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/BriefingSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "period_start",
+          "period_end",
+          "headline",
+          "sections",
+          "created_at"
+        ],
+        "title": "BriefingOut",
+        "type": "object"
+      },
+      "BriefingSection": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BriefingItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "items"
+        ],
+        "title": "BriefingSection",
+        "type": "object"
+      },
       "CaseEvent": {
         "additionalProperties": false,
         "properties": {
@@ -644,6 +1295,7 @@
               "needs_information",
               "awaiting_approval",
               "awaiting_external_outcome",
+              "escalated",
               "resolved"
             ],
             "title": "Next State",
@@ -657,6 +1309,7 @@
                   "needs_information",
                   "awaiting_approval",
                   "awaiting_external_outcome",
+                  "escalated",
                   "resolved"
                 ],
                 "type": "string"
@@ -692,10 +1345,27 @@
             },
             "title": "Cases",
             "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
-          "cases"
+          "cases",
+          "total",
+          "next_cursor"
         ],
         "title": "CaseListOut",
         "type": "object"
@@ -732,6 +1402,7 @@
               "needs_information",
               "awaiting_approval",
               "awaiting_external_outcome",
+              "escalated",
               "resolved"
             ],
             "title": "State",
@@ -781,6 +1452,38 @@
             "title": "Customer",
             "type": "string"
           },
+          "days_overdue": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Overdue"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "handled_by": {
+            "enum": [
+              "owner",
+              "policy",
+              "agent",
+              "none"
+            ],
+            "title": "Handled By",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -788,6 +1491,14 @@
           "invoice_id": {
             "title": "Invoice Id",
             "type": "string"
+          },
+          "needs_owner": {
+            "title": "Needs Owner",
+            "type": "boolean"
+          },
+          "open_escalations": {
+            "title": "Open Escalations",
+            "type": "integer"
           },
           "outstanding_cents": {
             "title": "Outstanding Cents",
@@ -803,6 +1514,7 @@
               "needs_information",
               "awaiting_approval",
               "awaiting_external_outcome",
+              "escalated",
               "resolved"
             ],
             "title": "State",
@@ -831,9 +1543,80 @@
           "total_cents",
           "outstanding_cents",
           "currency",
-          "pending_actions"
+          "pending_actions",
+          "due_at",
+          "days_overdue",
+          "open_escalations",
+          "needs_owner",
+          "handled_by"
         ],
         "title": "CaseSummary",
+        "type": "object"
+      },
+      "ClockIn": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "play",
+              "pause",
+              "speed"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "speed": {
+            "anyOf": [
+              {
+                "maximum": 10080.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speed"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ClockIn",
+        "type": "object"
+      },
+      "ClockOut": {
+        "additionalProperties": false,
+        "properties": {
+          "now": {
+            "title": "Now",
+            "type": "string"
+          },
+          "offset_seconds": {
+            "title": "Offset Seconds",
+            "type": "integer"
+          },
+          "playing": {
+            "title": "Playing",
+            "type": "boolean"
+          },
+          "simulated": {
+            "title": "Simulated",
+            "type": "boolean"
+          },
+          "speed": {
+            "title": "Speed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "now",
+          "simulated",
+          "playing",
+          "speed",
+          "offset_seconds"
+        ],
+        "title": "ClockOut",
         "type": "object"
       },
       "ContactIn": {
@@ -997,6 +1780,89 @@
         "title": "ErrorOut",
         "type": "object"
       },
+      "EscalationOut": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "raised_by": {
+            "title": "Raised By",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "resolution_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Note"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "resolved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved By"
+          }
+        },
+        "required": [
+          "id",
+          "case_id",
+          "reason",
+          "question",
+          "evidence_ids",
+          "raised_by",
+          "created_at",
+          "resolved_at",
+          "resolved_by",
+          "resolution_note"
+        ],
+        "title": "EscalationOut",
+        "type": "object"
+      },
       "EvidenceIn": {
         "additionalProperties": false,
         "properties": {
@@ -1095,6 +1961,85 @@
           "evidence_ids"
         ],
         "title": "FindingOut",
+        "type": "object"
+      },
+      "GeneratorIn": {
+        "additionalProperties": false,
+        "properties": {
+          "customers": {
+            "default": 25,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Customers",
+            "type": "integer"
+          },
+          "months": {
+            "default": 6,
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "title": "Months",
+            "type": "integer"
+          },
+          "seed": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Seed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seed"
+        ],
+        "title": "GeneratorIn",
+        "type": "object"
+      },
+      "GeneratorRunOut": {
+        "additionalProperties": false,
+        "properties": {
+          "customers": {
+            "title": "Customers",
+            "type": "integer"
+          },
+          "events_scheduled": {
+            "title": "Events Scheduled",
+            "type": "integer"
+          },
+          "first_event_at": {
+            "title": "First Event At",
+            "type": "string"
+          },
+          "invoices": {
+            "title": "Invoices",
+            "type": "integer"
+          },
+          "last_event_at": {
+            "title": "Last Event At",
+            "type": "string"
+          },
+          "months": {
+            "title": "Months",
+            "type": "integer"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "simulated": {
+            "default": true,
+            "title": "Simulated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "seed",
+          "months",
+          "customers",
+          "invoices",
+          "events_scheduled",
+          "first_event_at",
+          "last_event_at"
+        ],
+        "title": "GeneratorRunOut",
         "type": "object"
       },
       "InboxMessage": {
@@ -1198,6 +2143,18 @@
             "title": "Customer",
             "type": "string"
           },
+          "due_at": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
           "invoice_id": {
             "maxLength": 64,
             "minLength": 1,
@@ -1245,6 +2202,17 @@
             "title": "Disputed",
             "type": "boolean"
           },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1284,7 +2252,8 @@
           "disputed",
           "settled_cents",
           "outstanding_cents",
-          "state"
+          "state",
+          "due_at"
         ],
         "title": "InvoiceOut",
         "type": "object"
@@ -1326,7 +2295,9 @@
           "kind": {
             "enum": [
               "settlement_check",
-              "investigate"
+              "investigate",
+              "cadence_step",
+              "briefing"
             ],
             "title": "Kind",
             "type": "string"
@@ -1470,12 +2441,72 @@
         "title": "MessagePayload",
         "type": "object"
       },
+      "PauseIn": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "PauseIn",
+        "type": "object"
+      },
       "PolicyIn": {
         "additionalProperties": false,
         "properties": {
           "approval_ttl_minutes": {
             "title": "Approval Ttl Minutes",
             "type": "integer"
+          },
+          "autonomy_rules": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AutonomyRuleIn"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autonomy Rules"
+          },
+          "cadence_days": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cadence Days"
+          },
+          "daily_model_budget_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Model Budget Cents"
           },
           "follow_up_days": {
             "title": "Follow Up Days",
@@ -1501,6 +2532,20 @@
             "title": "Approval Ttl Minutes",
             "type": "integer"
           },
+          "autonomy_rules": {
+            "items": {
+              "$ref": "#/components/schemas/AutonomyRule"
+            },
+            "title": "Autonomy Rules",
+            "type": "array"
+          },
+          "cadence_days": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Cadence Days",
+            "type": "array"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
@@ -1508,6 +2553,10 @@
           "created_by": {
             "title": "Created By",
             "type": "string"
+          },
+          "daily_model_budget_cents": {
+            "title": "Daily Model Budget Cents",
+            "type": "integer"
           },
           "follow_up_days": {
             "title": "Follow Up Days",
@@ -1527,10 +2576,43 @@
           "approval_ttl_minutes",
           "follow_up_days",
           "max_reminders",
+          "autonomy_rules",
+          "cadence_days",
+          "daily_model_budget_cents",
           "created_by",
           "created_at"
         ],
         "title": "PolicyOut",
+        "type": "object"
+      },
+      "PolicyPreviewOut": {
+        "additionalProperties": false,
+        "description": "What a draft policy would do to the open cases right now.",
+        "properties": {
+          "approve": {
+            "title": "Approve",
+            "type": "integer"
+          },
+          "auto": {
+            "title": "Auto",
+            "type": "integer"
+          },
+          "blocked": {
+            "title": "Blocked",
+            "type": "integer"
+          },
+          "open_cases": {
+            "title": "Open Cases",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open_cases",
+          "auto",
+          "approve",
+          "blocked"
+        ],
+        "title": "PolicyPreviewOut",
         "type": "object"
       },
       "ProposalIn": {
@@ -1619,6 +2701,25 @@
           "case"
         ],
         "title": "ReplyOut",
+        "type": "object"
+      },
+      "ResolveIn": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "ResolveIn",
         "type": "object"
       },
       "ScenarioInfo": {
@@ -1726,6 +2827,83 @@
         "title": "SettlementIn",
         "type": "object"
       },
+      "SummaryOut": {
+        "additionalProperties": false,
+        "description": "Headline numbers, computed by the backend; the UI never adds them up.",
+        "properties": {
+          "auto_handled_7d": {
+            "title": "Auto Handled 7D",
+            "type": "integer"
+          },
+          "autonomy_paused": {
+            "title": "Autonomy Paused",
+            "type": "boolean"
+          },
+          "awaiting_owner": {
+            "title": "Awaiting Owner",
+            "type": "integer"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "model_spend_today_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Spend Today Cents"
+          },
+          "now": {
+            "title": "Now",
+            "type": "string"
+          },
+          "open_cases": {
+            "title": "Open Cases",
+            "type": "integer"
+          },
+          "outstanding_cents": {
+            "title": "Outstanding Cents",
+            "type": "integer"
+          },
+          "overdue_cases": {
+            "title": "Overdue Cases",
+            "type": "integer"
+          },
+          "overdue_cents": {
+            "title": "Overdue Cents",
+            "type": "integer"
+          },
+          "resolved_7d": {
+            "title": "Resolved 7D",
+            "type": "integer"
+          },
+          "simulated_time": {
+            "title": "Simulated Time",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "currency",
+          "outstanding_cents",
+          "overdue_cents",
+          "open_cases",
+          "overdue_cases",
+          "awaiting_owner",
+          "auto_handled_7d",
+          "resolved_7d",
+          "model_spend_today_cents",
+          "autonomy_paused",
+          "now",
+          "simulated_time"
+        ],
+        "title": "SummaryOut",
+        "type": "object"
+      },
       "ToolCallOut": {
         "additionalProperties": false,
         "properties": {
@@ -1769,6 +2947,79 @@
           "created_at"
         ],
         "title": "ToolCallOut",
+        "type": "object"
+      },
+      "TruthItem": {
+        "additionalProperties": false,
+        "properties": {
+          "expected": {
+            "items": {
+              "enum": [
+                "resolved",
+                "reminded_automatically",
+                "information_requested",
+                "escalated",
+                "owner_approval"
+              ],
+              "type": "string"
+            },
+            "title": "Expected",
+            "type": "array"
+          },
+          "invoice_id": {
+            "title": "Invoice Id",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "problem": {
+            "enum": [
+              "none",
+              "late_payer",
+              "partial_unexplained",
+              "partial_agreed_credit",
+              "disputed_work",
+              "missing_contract",
+              "mistyped_reference",
+              "promise_to_pay",
+              "claims_paid",
+              "prompt_injection"
+            ],
+            "title": "Problem",
+            "type": "string"
+          }
+        },
+        "required": [
+          "invoice_id",
+          "problem",
+          "expected",
+          "note"
+        ],
+        "title": "TruthItem",
+        "type": "object"
+      },
+      "TruthOut": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TruthItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seed",
+          "items"
+        ],
+        "title": "TruthOut",
         "type": "object"
       },
       "ValidationIssue": {
@@ -1991,12 +3242,22 @@
             "title": "Agent Runs",
             "type": "array"
           },
+          "autonomy": {
+            "$ref": "#/components/schemas/AutonomyStatus"
+          },
           "case": {
             "$ref": "#/components/schemas/CaseOut"
           },
           "contact_on_file": {
             "title": "Contact On File",
             "type": "boolean"
+          },
+          "escalations": {
+            "items": {
+              "$ref": "#/components/schemas/EscalationOut"
+            },
+            "title": "Escalations",
+            "type": "array"
           },
           "evidence": {
             "items": {
@@ -2053,6 +3314,8 @@
           "contact_on_file",
           "sending_enabled",
           "reminders_sent",
+          "escalations",
+          "autonomy",
           "now",
           "simulated_time"
         ],
@@ -2064,7 +3327,7 @@
   "info": {
     "description": "Receivables backend. Synthetic data; simulated actions only.",
     "title": "FinanceOps",
-    "version": "0.4.0"
+    "version": "0.5.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2477,6 +3740,116 @@
         "summary": "Reject Action"
       }
     },
+    "/activity": {
+      "get": {
+        "description": "What the system did, oldest first after the cursor. Poll with ?after=<cursor>.",
+        "operationId": "get_activity_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Get Activity"
+      }
+    },
     "/agent-runs/{run_id}": {
       "get": {
         "description": "Owner-only: the trace includes full evidence text the agent read.",
@@ -2573,11 +3946,823 @@
         "summary": "Get Agent Run"
       }
     },
+    "/agents": {
+      "get": {
+        "operationId": "list_agents_agents_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "List Agents"
+      }
+    },
+    "/agents/{name}/pause": {
+      "post": {
+        "operationId": "pause_agent_agents__name__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Pause Agent"
+      }
+    },
+    "/agents/{name}/resume": {
+      "post": {
+        "operationId": "resume_agent_agents__name__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Resume Agent"
+      }
+    },
+    "/attention": {
+      "get": {
+        "description": "The \"Needs you\" queue: actions to approve or execute, open escalations.",
+        "operationId": "get_attention_attention_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Get Attention"
+      }
+    },
+    "/autonomy": {
+      "get": {
+        "operationId": "get_autonomy_autonomy_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomyStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Get Autonomy"
+      }
+    },
+    "/autonomy/pause": {
+      "post": {
+        "description": "Kill switch: nothing executes automatically until resumed.",
+        "operationId": "pause_autonomy_autonomy_pause_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PauseIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomyStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Pause Autonomy"
+      }
+    },
+    "/autonomy/resume": {
+      "post": {
+        "operationId": "resume_autonomy_autonomy_resume_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomyStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Resume Autonomy"
+      }
+    },
+    "/briefings/latest": {
+      "get": {
+        "description": "Model-written text: show as plain text only. 404 until the first briefing.",
+        "operationId": "latest_briefing_briefings_latest_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BriefingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Latest Briefing"
+      }
+    },
     "/cases": {
       "get": {
-        "description": "Owner-only: lists customer names and amounts.",
+        "description": "Owner-only: lists customer names and amounts. Filtered, sorted and\npaged by the backend; pass next_cursor back as ?cursor= for more.",
         "operationId": "list_cases_cases_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "needs_information",
+                    "awaiting_approval",
+                    "awaiting_external_outcome",
+                    "escalated",
+                    "resolved"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "updated",
+              "enum": [
+                "updated",
+                "outstanding",
+                "overdue",
+                "customer"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 9,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -3027,6 +5212,137 @@
         "summary": "Get Workspace"
       }
     },
+    "/demo/clock": {
+      "get": {
+        "operationId": "demo_clock_demo_clock_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClockOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Demo Clock",
+        "tags": [
+          "demo: synthetic events"
+        ]
+      },
+      "post": {
+        "description": "play / pause / speed (simulated minutes per real second). While\nplaying, the worker loop moves the SIMULATED clock forward.",
+        "operationId": "demo_set_clock_demo_clock_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClockIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClockOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Demo Set Clock",
+        "tags": [
+          "demo: synthetic events"
+        ]
+      }
+    },
     "/demo/contacts": {
       "post": {
         "operationId": "demo_contact_demo_contacts_post",
@@ -3235,6 +5551,151 @@
           }
         },
         "summary": "Demo Evidence",
+        "tags": [
+          "demo: synthetic events"
+        ]
+      }
+    },
+    "/demo/generator/run": {
+      "post": {
+        "description": "Generate a fictional business (same seed, same data) and schedule its timeline.",
+        "operationId": "demo_generate_demo_generator_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratorIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneratorRunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Demo Generate",
+        "tags": [
+          "demo: synthetic events"
+        ]
+      }
+    },
+    "/demo/generator/truth": {
+      "get": {
+        "description": "The planted problems and their expected outcomes, for evaluation.",
+        "operationId": "demo_truth_demo_generator_truth_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "seed",
+            "required": true,
+            "schema": {
+              "title": "Seed",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TruthOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Demo Truth",
         "tags": [
           "demo: synthetic events"
         ]
@@ -3756,6 +6217,118 @@
         ]
       }
     },
+    "/escalations/{escalation_id}/resolve": {
+      "post": {
+        "operationId": "resolve_escalation_escalations__escalation_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "escalation_id",
+            "required": true,
+            "schema": {
+              "title": "Escalation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResolveIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EscalationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Resolve Escalation"
+      }
+    },
     "/invoices/{invoice_id}": {
       "get": {
         "operationId": "get_invoice_invoices__invoice_id__get",
@@ -4003,6 +6576,189 @@
           }
         },
         "summary": "Set Policy"
+      }
+    },
+    "/policy/preview": {
+      "post": {
+        "description": "How many open cases a draft policy would handle automatically. Saves nothing.",
+        "operationId": "preview_policy_policy_preview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyPreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Preview Policy"
+      }
+    },
+    "/summary": {
+      "get": {
+        "operationId": "get_summary_summary_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Get Summary"
       }
     }
   }

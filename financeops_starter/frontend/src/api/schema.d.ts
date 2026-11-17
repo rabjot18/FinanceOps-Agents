@@ -78,6 +78,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Activity
+         * @description What the system did, oldest first after the cursor. Poll with ?after=<cursor>.
+         */
+        get: operations["get_activity_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agent-runs/{run_id}": {
         parameters: {
             query?: never;
@@ -98,6 +118,151 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agents */
+        get: operations["list_agents_agents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{name}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause Agent */
+        post: operations["pause_agent_agents__name__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{name}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Agent */
+        post: operations["resume_agent_agents__name__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/attention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attention
+         * @description The "Needs you" queue: actions to approve or execute, open escalations.
+         */
+        get: operations["get_attention_attention_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Autonomy */
+        get: operations["get_autonomy_autonomy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autonomy/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause Autonomy
+         * @description Kill switch: nothing executes automatically until resumed.
+         */
+        post: operations["pause_autonomy_autonomy_pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autonomy/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Autonomy */
+        post: operations["resume_autonomy_autonomy_resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/briefings/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest Briefing
+         * @description Model-written text: show as plain text only. 404 until the first briefing.
+         */
+        get: operations["latest_briefing_briefings_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases": {
         parameters: {
             query?: never;
@@ -107,7 +272,8 @@ export interface paths {
         };
         /**
          * List Cases
-         * @description Owner-only: lists customer names and amounts.
+         * @description Owner-only: lists customer names and amounts. Filtered, sorted and
+         *     paged by the backend; pass next_cursor back as ?cursor= for more.
          */
         get: operations["list_cases_cases_get"];
         put?: never;
@@ -197,6 +363,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/demo/clock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Demo Clock */
+        get: operations["demo_clock_demo_clock_get"];
+        put?: never;
+        /**
+         * Demo Set Clock
+         * @description play / pause / speed (simulated minutes per real second). While
+         *     playing, the worker loop moves the SIMULATED clock forward.
+         */
+        post: operations["demo_set_clock_demo_clock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/demo/contacts": {
         parameters: {
             query?: never;
@@ -242,6 +430,46 @@ export interface paths {
         put?: never;
         /** Demo Evidence */
         post: operations["demo_evidence_demo_evidence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/demo/generator/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo Generate
+         * @description Generate a fictional business (same seed, same data) and schedule its timeline.
+         */
+        post: operations["demo_generate_demo_generator_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/demo/generator/truth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Demo Truth
+         * @description The planted problems and their expected outcomes, for evaluation.
+         */
+        get: operations["demo_truth_demo_generator_truth_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -377,6 +605,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/escalations/{escalation_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Escalation */
+        post: operations["resolve_escalation_escalations__escalation_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/invoices/{invoice_id}": {
         parameters: {
             query?: never;
@@ -412,6 +657,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/policy/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Policy
+         * @description How many open cases a draft policy would handle automatically. Saves nothing.
+         */
+        post: operations["preview_policy_policy_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Summary */
+        get: operations["get_summary_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -423,6 +705,7 @@ export interface components {
             approved_at: string | null;
             /** Approved By */
             approved_by: string | null;
+            autonomy: components["schemas"]["AutonomyDecision"] | null;
             delivery: components["schemas"]["Delivery"] | null;
             /** Evidence Ids */
             evidence_ids: string[];
@@ -455,14 +738,79 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "proposed" | "approved" | "rejected" | "queued" | "dispatched" | "follow_up_due" | "executed_simulated" | "cancelled" | "failed";
+            status: "proposed" | "approved" | "rejected" | "queued" | "dispatched" | "follow_up_due" | "executed_simulated" | "cancelled" | "failed" | "superseded";
+            /** Superseded By */
+            superseded_by: string | null;
             /** Version */
             version: number;
+        };
+        /** ActivityItem */
+        ActivityItem: {
+            /** Actor */
+            actor: string;
+            /** Case Id */
+            case_id: string | null;
+            /** Created At */
+            created_at: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "event_ingested" | "case_state_changed" | "action_proposed" | "action_auto_approved" | "action_approved" | "action_rejected" | "action_superseded" | "message_queued" | "message_sent" | "message_cancelled" | "agent_run_started" | "agent_run_finished" | "escalation_opened" | "escalation_resolved" | "briefing_published" | "autonomy_paused" | "autonomy_resumed" | "agent_paused" | "agent_resumed" | "policy_changed";
+            /** Ref */
+            ref: string | null;
+            /** Seq */
+            seq: number;
+            /** Summary */
+            summary: string;
+            /** Synthetic */
+            synthetic: boolean;
+        };
+        /** ActivityOut */
+        ActivityOut: {
+            /** Cursor */
+            cursor: number;
+            /** Items */
+            items: components["schemas"]["ActivityItem"][];
+        };
+        /** AgentInfo */
+        AgentInfo: {
+            /** Can Write */
+            can_write: boolean;
+            /** Last Run At */
+            last_run_at: string | null;
+            /** Model */
+            model: string;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "collections" | "briefing";
+            /** Outcomes 7D */
+            outcomes_7d: {
+                [key: string]: number;
+            };
+            /** Paused */
+            paused: boolean;
+            /** Runs Today */
+            runs_today: number;
+            /** Title */
+            title: string;
+        };
+        /** AgentListOut */
+        AgentListOut: {
+            /** Agents */
+            agents: components["schemas"]["AgentInfo"][];
         };
         /** AgentRunOut */
         AgentRunOut: {
             /** Action Id */
             action_id: string | null;
+            /**
+             * Agent
+             * @enum {string}
+             */
+            agent: "collections" | "briefing";
             /** Cache Read Tokens */
             cache_read_tokens: number;
             /** Cache Write Tokens */
@@ -507,6 +855,11 @@ export interface components {
         AgentRunSummary: {
             /** Action Id */
             action_id: string | null;
+            /**
+             * Agent
+             * @enum {string}
+             */
+            agent: "collections" | "briefing";
             /** Cache Read Tokens */
             cache_read_tokens: number;
             /** Cache Write Tokens */
@@ -576,6 +929,158 @@ export interface components {
             /** Payload Hash */
             payload_hash: string;
         };
+        /** AttentionApproval */
+        AttentionApproval: {
+            action: components["schemas"]["ActionOut"];
+            /** Case Id */
+            case_id: string;
+            /** Currency */
+            currency: string;
+            /** Customer */
+            customer: string;
+            /** Outstanding Cents */
+            outstanding_cents: number;
+        };
+        /** AttentionEscalation */
+        AttentionEscalation: {
+            /** Currency */
+            currency: string;
+            /** Customer */
+            customer: string;
+            escalation: components["schemas"]["EscalationOut"];
+            /** Outstanding Cents */
+            outstanding_cents: number;
+        };
+        /**
+         * AttentionOut
+         * @description The owner's "Needs you" queue, oldest first.
+         */
+        AttentionOut: {
+            /** Approvals */
+            approvals: components["schemas"]["AttentionApproval"][];
+            autonomy: components["schemas"]["AutonomyStatus"];
+            /** Escalations */
+            escalations: components["schemas"]["AttentionEscalation"][];
+        };
+        /**
+         * AutonomyDecision
+         * @description How the policy classified an action, evaluated by code (never the model).
+         */
+        AutonomyDecision: {
+            /** Decided At */
+            decided_at: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "auto" | "approve" | "blocked";
+            /** Policy Version */
+            policy_version: number;
+            /** Reasons */
+            reasons: string[];
+            /** Rule Id */
+            rule_id: string | null;
+        };
+        /**
+         * AutonomyRule
+         * @description One autonomy rule. Rules are checked in order; the first match decides.
+         *     No match means the owner approves.
+         */
+        AutonomyRule: {
+            /**
+             * Action Kind
+             * @enum {string}
+             */
+            action_kind: "collection_reminder" | "request_information";
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Max Amount Cents */
+            max_amount_cents: number | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "auto" | "approve" | "blocked";
+            /** Require Evidence */
+            require_evidence: boolean;
+            /** Require Undisputed */
+            require_undisputed: boolean;
+        };
+        /** AutonomyRuleIn */
+        AutonomyRuleIn: {
+            /**
+             * Action Kind
+             * @enum {string}
+             */
+            action_kind: "collection_reminder" | "request_information";
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Max Amount Cents */
+            max_amount_cents?: number | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "auto" | "approve" | "blocked";
+            /**
+             * Require Evidence
+             * @default true
+             */
+            require_evidence: boolean;
+            /**
+             * Require Undisputed
+             * @default true
+             */
+            require_undisputed: boolean;
+        };
+        /** AutonomyStatus */
+        AutonomyStatus: {
+            /** Changed At */
+            changed_at: string | null;
+            /** Changed By */
+            changed_by: string | null;
+            /** Paused */
+            paused: boolean;
+            /** Reason */
+            reason: string | null;
+        };
+        /** BriefingItem */
+        BriefingItem: {
+            /** Case Ids */
+            case_ids: string[];
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Text */
+            text: string;
+        };
+        /** BriefingOut */
+        BriefingOut: {
+            /** Created At */
+            created_at: string;
+            /** Headline */
+            headline: string;
+            /** Id */
+            id: string;
+            /** Period End */
+            period_end: string;
+            /** Period Start */
+            period_start: string;
+            /** Run Id */
+            run_id: string | null;
+            /** Sections */
+            sections: components["schemas"]["BriefingSection"][];
+        };
+        /** BriefingSection */
+        BriefingSection: {
+            /** Items */
+            items: components["schemas"]["BriefingItem"][];
+            /** Title */
+            title: string;
+        };
         /** CaseEvent */
         CaseEvent: {
             /** Created At */
@@ -588,9 +1093,9 @@ export interface components {
              * Next State
              * @enum {string}
              */
-            next_state: "open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "resolved";
+            next_state: "open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "escalated" | "resolved";
             /** Prior State */
-            prior_state: ("open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "resolved") | null;
+            prior_state: ("open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "escalated" | "resolved") | null;
             /** Reason */
             reason: string;
         };
@@ -598,6 +1103,10 @@ export interface components {
         CaseListOut: {
             /** Cases */
             cases: components["schemas"]["CaseSummary"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Total */
+            total: number;
         };
         /** CaseOut */
         CaseOut: {
@@ -615,7 +1124,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "resolved";
+            state: "open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "escalated" | "resolved";
             /** Updated At */
             updated_at: string;
             verification: components["schemas"]["Verification"] | null;
@@ -628,10 +1137,23 @@ export interface components {
             currency: string;
             /** Customer */
             customer: string;
+            /** Days Overdue */
+            days_overdue: number | null;
+            /** Due At */
+            due_at: string | null;
+            /**
+             * Handled By
+             * @enum {string}
+             */
+            handled_by: "owner" | "policy" | "agent" | "none";
             /** Id */
             id: string;
             /** Invoice Id */
             invoice_id: string;
+            /** Needs Owner */
+            needs_owner: boolean;
+            /** Open Escalations */
+            open_escalations: number;
             /** Outstanding Cents */
             outstanding_cents: number;
             /** Pending Actions */
@@ -640,13 +1162,36 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "resolved";
+            state: "open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "escalated" | "resolved";
             /** Total Cents */
             total_cents: number;
             /** Updated At */
             updated_at: string;
             /** Version */
             version: number;
+        };
+        /** ClockIn */
+        ClockIn: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "play" | "pause" | "speed";
+            /** Speed */
+            speed?: number | null;
+        };
+        /** ClockOut */
+        ClockOut: {
+            /** Now */
+            now: string;
+            /** Offset Seconds */
+            offset_seconds: number;
+            /** Playing */
+            playing: boolean;
+            /** Simulated */
+            simulated: boolean;
+            /** Speed */
+            speed: number;
         };
         /** ContactIn */
         ContactIn: {
@@ -700,6 +1245,29 @@ export interface components {
             /** Detail */
             detail: string | components["schemas"]["ValidationIssue"][];
         };
+        /** EscalationOut */
+        EscalationOut: {
+            /** Case Id */
+            case_id: string;
+            /** Created At */
+            created_at: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Id */
+            id: string;
+            /** Question */
+            question: string;
+            /** Raised By */
+            raised_by: string;
+            /** Reason */
+            reason: string;
+            /** Resolution Note */
+            resolution_note: string | null;
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Resolved By */
+            resolved_by: string | null;
+        };
         /** EvidenceIn */
         EvidenceIn: {
             /** Body */
@@ -734,6 +1302,43 @@ export interface components {
             evidence_ids: string[];
             /** Statement */
             statement: string;
+        };
+        /** GeneratorIn */
+        GeneratorIn: {
+            /**
+             * Customers
+             * @default 25
+             */
+            customers: number;
+            /**
+             * Months
+             * @default 6
+             */
+            months: number;
+            /** Seed */
+            seed: number;
+        };
+        /** GeneratorRunOut */
+        GeneratorRunOut: {
+            /** Customers */
+            customers: number;
+            /** Events Scheduled */
+            events_scheduled: number;
+            /** First Event At */
+            first_event_at: string;
+            /** Invoices */
+            invoices: number;
+            /** Last Event At */
+            last_event_at: string;
+            /** Months */
+            months: number;
+            /** Seed */
+            seed: number;
+            /**
+             * Simulated
+             * @default true
+             */
+            simulated: boolean;
         };
         /** InboxMessage */
         InboxMessage: {
@@ -773,6 +1378,8 @@ export interface components {
         InvoiceIn: {
             /** Customer */
             customer: string;
+            /** Due At */
+            due_at?: string | null;
             /** Invoice Id */
             invoice_id: string;
             /** Total Cents */
@@ -788,6 +1395,8 @@ export interface components {
             customer: string;
             /** Disputed */
             disputed: boolean;
+            /** Due At */
+            due_at: string | null;
             /** Id */
             id: string;
             /** Outstanding Cents */
@@ -822,7 +1431,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "settlement_check" | "investigate";
+            kind: "settlement_check" | "investigate" | "cadence_step" | "briefing";
             /** Ref */
             ref: string | null;
             /**
@@ -866,10 +1475,21 @@ export interface components {
             /** To */
             to: string | null;
         };
+        /** PauseIn */
+        PauseIn: {
+            /** Reason */
+            reason?: string | null;
+        };
         /** PolicyIn */
         PolicyIn: {
             /** Approval Ttl Minutes */
             approval_ttl_minutes: number;
+            /** Autonomy Rules */
+            autonomy_rules?: components["schemas"]["AutonomyRuleIn"][] | null;
+            /** Cadence Days */
+            cadence_days?: number[] | null;
+            /** Daily Model Budget Cents */
+            daily_model_budget_cents?: number | null;
             /** Follow Up Days */
             follow_up_days: number;
             /** Max Reminders */
@@ -879,16 +1499,36 @@ export interface components {
         PolicyOut: {
             /** Approval Ttl Minutes */
             approval_ttl_minutes: number;
+            /** Autonomy Rules */
+            autonomy_rules: components["schemas"]["AutonomyRule"][];
+            /** Cadence Days */
+            cadence_days: number[];
             /** Created At */
             created_at: string;
             /** Created By */
             created_by: string;
+            /** Daily Model Budget Cents */
+            daily_model_budget_cents: number;
             /** Follow Up Days */
             follow_up_days: number;
             /** Max Reminders */
             max_reminders: number;
             /** Version */
             version: number;
+        };
+        /**
+         * PolicyPreviewOut
+         * @description What a draft policy would do to the open cases right now.
+         */
+        PolicyPreviewOut: {
+            /** Approve */
+            approve: number;
+            /** Auto */
+            auto: number;
+            /** Blocked */
+            blocked: number;
+            /** Open Cases */
+            open_cases: number;
         };
         /** ProposalIn */
         ProposalIn: {
@@ -914,6 +1554,11 @@ export interface components {
             case: components["schemas"]["CaseOut"];
             /** Evidence */
             evidence: components["schemas"]["EvidenceOut"][];
+        };
+        /** ResolveIn */
+        ResolveIn: {
+            /** Note */
+            note?: string | null;
         };
         /** ScenarioInfo */
         ScenarioInfo: {
@@ -956,6 +1601,36 @@ export interface components {
             /** Settlement Id */
             settlement_id: string;
         };
+        /**
+         * SummaryOut
+         * @description Headline numbers, computed by the backend; the UI never adds them up.
+         */
+        SummaryOut: {
+            /** Auto Handled 7D */
+            auto_handled_7d: number;
+            /** Autonomy Paused */
+            autonomy_paused: boolean;
+            /** Awaiting Owner */
+            awaiting_owner: number;
+            /** Currency */
+            currency: string;
+            /** Model Spend Today Cents */
+            model_spend_today_cents: number | null;
+            /** Now */
+            now: string;
+            /** Open Cases */
+            open_cases: number;
+            /** Outstanding Cents */
+            outstanding_cents: number;
+            /** Overdue Cases */
+            overdue_cases: number;
+            /** Overdue Cents */
+            overdue_cents: number;
+            /** Resolved 7D */
+            resolved_7d: number;
+            /** Simulated Time */
+            simulated_time: boolean;
+        };
         /** ToolCallOut */
         ToolCallOut: {
             /** Created At */
@@ -974,6 +1649,27 @@ export interface components {
             seq: number;
             /** Tool Use Id */
             tool_use_id: string;
+        };
+        /** TruthItem */
+        TruthItem: {
+            /** Expected */
+            expected: ("resolved" | "reminded_automatically" | "information_requested" | "escalated" | "owner_approval")[];
+            /** Invoice Id */
+            invoice_id: string;
+            /** Note */
+            note: string;
+            /**
+             * Problem
+             * @enum {string}
+             */
+            problem: "none" | "late_payer" | "partial_unexplained" | "partial_agreed_credit" | "disputed_work" | "missing_contract" | "mistyped_reference" | "promise_to_pay" | "claims_paid" | "prompt_injection";
+        };
+        /** TruthOut */
+        TruthOut: {
+            /** Items */
+            items: components["schemas"]["TruthItem"][];
+            /** Seed */
+            seed: number;
         };
         /**
          * ValidationIssue
@@ -1059,9 +1755,12 @@ export interface components {
             actions: components["schemas"]["ActionOut"][];
             /** Agent Runs */
             agent_runs: components["schemas"]["AgentRunSummary"][];
+            autonomy: components["schemas"]["AutonomyStatus"];
             case: components["schemas"]["CaseOut"];
             /** Contact On File */
             contact_on_file: boolean;
+            /** Escalations */
+            escalations: components["schemas"]["EscalationOut"][];
             /** Evidence */
             evidence: components["schemas"]["EvidenceOut"][];
             invoice: components["schemas"]["InvoiceOut"];
@@ -1370,6 +2069,76 @@ export interface operations {
             };
         };
     };
+    get_activity_activity_get: {
+        parameters: {
+            query?: {
+                after?: number;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
     get_agent_run_agent_runs__run_id__get: {
         parameters: {
             query?: never;
@@ -1439,9 +2208,559 @@ export interface operations {
             };
         };
     };
-    list_cases_cases_get: {
+    list_agents_agents_get: {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentListOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    pause_agent_agents__name__pause_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInfo"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    resume_agent_agents__name__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInfo"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    get_attention_attention_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttentionOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    get_autonomy_autonomy_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyStatus"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    pause_autonomy_autonomy_pause_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PauseIn"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyStatus"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    resume_autonomy_autonomy_resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyStatus"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    latest_briefing_briefings_latest_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefingOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    list_cases_cases_get: {
+        parameters: {
+            query?: {
+                state?: ("open" | "needs_information" | "awaiting_approval" | "awaiting_external_outcome" | "escalated" | "resolved") | null;
+                q?: string | null;
+                sort?: "updated" | "outstanding" | "overdue" | "customer";
+                limit?: number;
+                cursor?: string | null;
+            };
             header?: {
                 authorization?: string | null;
             };
@@ -1775,6 +3094,122 @@ export interface operations {
             };
         };
     };
+    demo_clock_demo_clock_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClockOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    demo_set_clock_demo_clock_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClockIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClockOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
     demo_contact_demo_contacts_post: {
         parameters: {
             query?: never;
@@ -1915,6 +3350,124 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvidenceListOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    demo_generate_demo_generator_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GeneratorIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GeneratorRunOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    demo_truth_demo_generator_truth_get: {
+        parameters: {
+            query: {
+                seed: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TruthOut"];
                 };
             };
             /** @description Not found */
@@ -2376,6 +3929,79 @@ export interface operations {
             };
         };
     };
+    resolve_escalation_escalations__escalation_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                escalation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResolveIn"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EscalationOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
     get_invoice_invoices__invoice_id__get: {
         parameters: {
             query?: never;
@@ -2523,6 +4149,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PolicyOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    preview_policy_policy_preview_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyPreviewOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    get_summary_summary_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryOut"];
                 };
             };
             /** @description Owner authentication required */

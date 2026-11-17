@@ -1,4 +1,4 @@
-"""FinanceOps HTTP API (Milestones 1-4). Business rules live in core.py, not here.
+"""FinanceOps HTTP API (Milestones 1-5). Business rules live in core.py, not here.
 Response and error shapes are frozen in schemas.py / contracts/openapi.json.
 
 Run:  FINANCEOPS_ENABLE_DEMO=1 FINANCEOPS_OWNER_TOKEN=<secret> \\
@@ -20,7 +20,7 @@ import os
 import sqlite3
 from typing import List, Literal, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
@@ -41,6 +41,8 @@ class InvoiceIn(_Body):
     invoice_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
     customer: StrictStr = Field(min_length=1, max_length=200)
     total_cents: StrictInt = Field(gt=0)
+    # ISO 8601 date-time with a time zone; drives the reminder cadence.
+    due_at: Optional[StrictStr] = Field(default=None, max_length=40)
 
 
 class EvidenceIn(_Body):
@@ -78,10 +80,50 @@ class RejectIn(_Body):
     note: Optional[StrictStr] = Field(default=None, max_length=500)
 
 
+class AutonomyRuleIn(_Body):
+    id: StrictStr = Field(min_length=1, max_length=40)
+    action_kind: Literal["collection_reminder", "request_information"]
+    mode: Literal["auto", "approve", "blocked"]
+    max_amount_cents: Optional[StrictInt] = Field(default=None, gt=0)
+    require_undisputed: StrictBool = True
+    require_evidence: StrictBool = True
+    description: StrictStr = Field(min_length=1, max_length=200)
+
+
 class PolicyIn(_Body):
     approval_ttl_minutes: StrictInt
     follow_up_days: StrictInt
     max_reminders: StrictInt
+    # Milestone 5. Omitted = keep the current value.
+    autonomy_rules: Optional[List[AutonomyRuleIn]] = Field(default=None, max_length=20)
+    cadence_days: Optional[List[StrictInt]] = Field(default=None, max_length=10)
+    daily_model_budget_cents: Optional[StrictInt] = None
+
+    def core_args(self):
+        rules = None if self.autonomy_rules is None else [r.model_dump() for r in self.autonomy_rules]
+        return dict(approval_ttl_minutes=self.approval_ttl_minutes,
+                    follow_up_days=self.follow_up_days, max_reminders=self.max_reminders,
+                    autonomy_rules=rules, cadence_days=self.cadence_days,
+                    daily_model_budget_cents=self.daily_model_budget_cents)
+
+
+class PauseIn(_Body):
+    reason: Optional[StrictStr] = Field(default=None, max_length=500)
+
+
+class ResolveIn(_Body):
+    note: Optional[StrictStr] = Field(default=None, max_length=500)
+
+
+class ClockIn(_Body):
+    action: Literal["play", "pause", "speed"]
+    speed: Optional[StrictInt] = Field(default=None, ge=1, le=7 * 24 * 60)  # simulated min per real s
+
+
+class GeneratorIn(_Body):
+    seed: StrictInt = Field(ge=0, le=2**31 - 1)
+    months: StrictInt = Field(default=6, ge=1, le=12)
+    customers: StrictInt = Field(default=25, ge=1, le=200)
 
 
 class ContactIn(_Body):
@@ -104,6 +146,11 @@ def _invoice_out(invoice):
     return {**invoice, "case_id": FinanceCore.case_id(invoice["id"])}
 
 
+def _not_built(step):
+    """Part of the frozen Milestone 5 contract whose logic lands in a later step."""
+    raise HTTPException(503, f"Not built yet (Milestone 5 step {step})")
+
+
 def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
                agent_client=None):
     """agent_client: an Anthropic client (or a test fake). None = create the
@@ -117,7 +164,7 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
 
     FinanceCore(db_path).close()  # apply schema migrations once at startup
 
-    app = FastAPI(title="FinanceOps", version="0.4.0",
+    app = FastAPI(title="FinanceOps", version="0.5.0",
                   description="Receivables backend. Synthetic data; simulated actions only.",
                   responses=schemas.COMMON_ERRORS)
 
@@ -185,9 +232,15 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
     # --- owner-only ------------------------------------------------------
 
     @app.get("/cases", response_model=schemas.CaseListOut, responses=schemas.OWNER_ERRORS)
-    def list_cases(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
-        """Owner-only: lists customer names and amounts."""
-        return {"cases": fc.cases()}
+    def list_cases(state: Optional[schemas.CaseState] = None,
+                   q: Optional[str] = Query(default=None, max_length=100),
+                   sort: Literal["updated", "outstanding", "overdue", "customer"] = "updated",
+                   limit: int = Query(default=50, ge=1, le=200),
+                   cursor: Optional[str] = Query(default=None, max_length=9),
+                   _: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        """Owner-only: lists customer names and amounts. Filtered, sorted and
+        paged by the backend; pass next_cursor back as ?cursor= for more."""
+        return fc.case_list(state=state, q=q, sort=sort, limit=limit, cursor=cursor)
 
     @app.get("/cases/{case_id}/workspace", response_model=schemas.WorkspaceOut, responses=schemas.OWNER_ERRORS)
     def get_workspace(case_id: str, _: str = Depends(require_owner),
@@ -240,8 +293,67 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
     @app.post("/policy", response_model=schemas.PolicyOut, responses=schemas.OWNER_ERRORS)
     def set_policy(body: PolicyIn, owner: str = Depends(require_owner),
                    fc: FinanceCore = Depends(core)):
-        return fc.set_policy(body.approval_ttl_minutes, body.follow_up_days,
-                             body.max_reminders, created_by=owner)
+        return fc.set_policy(**body.core_args(), created_by=owner)
+
+    @app.post("/policy/preview", response_model=schemas.PolicyPreviewOut, responses=schemas.OWNER_ERRORS)
+    def preview_policy(body: PolicyIn, _: str = Depends(require_owner)):
+        """How many open cases a draft policy would handle automatically. Saves nothing."""
+        _not_built("1a")
+
+    # --- Milestone 5: the owner's overview and controls ------------------
+
+    @app.get("/attention", response_model=schemas.AttentionOut, responses=schemas.OWNER_ERRORS)
+    def get_attention(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        """The "Needs you" queue: actions to approve or execute, open escalations."""
+        return fc.attention()
+
+    @app.get("/summary", response_model=schemas.SummaryOut, responses=schemas.OWNER_ERRORS)
+    def get_summary(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        return fc.summary()
+
+    @app.get("/activity", response_model=schemas.ActivityOut, responses=schemas.OWNER_ERRORS)
+    def get_activity(after: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=500),
+                     _: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        """What the system did, oldest first after the cursor. Poll with ?after=<cursor>."""
+        return fc.activity(after=after, limit=limit)
+
+    @app.post("/escalations/{escalation_id}/resolve", response_model=schemas.EscalationOut,
+              responses=schemas.OWNER_ERRORS)
+    def resolve_escalation(escalation_id: str, body: Optional[ResolveIn] = None,
+                           owner: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        return fc.resolve_escalation(escalation_id, resolved_by=owner,
+                                     note=body.note if body else None)
+
+    @app.get("/autonomy", response_model=schemas.AutonomyStatus, responses=schemas.OWNER_ERRORS)
+    def get_autonomy(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        return fc.autonomy_status()
+
+    @app.post("/autonomy/pause", response_model=schemas.AutonomyStatus, responses=schemas.OWNER_ERRORS)
+    def pause_autonomy(body: Optional[PauseIn] = None, owner: str = Depends(require_owner),
+                       fc: FinanceCore = Depends(core)):
+        """Kill switch: nothing executes automatically until resumed."""
+        return fc.set_autonomy_paused(True, changed_by=owner, reason=body.reason if body else None)
+
+    @app.post("/autonomy/resume", response_model=schemas.AutonomyStatus, responses=schemas.OWNER_ERRORS)
+    def resume_autonomy(owner: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        return fc.set_autonomy_paused(False, changed_by=owner)
+
+    @app.get("/agents", response_model=schemas.AgentListOut, responses=schemas.OWNER_ERRORS)
+    def list_agents(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        return {"agents": fc.agents()}
+
+    @app.post("/agents/{name}/pause", response_model=schemas.AgentInfo, responses=schemas.OWNER_ERRORS)
+    def pause_agent(name: str, owner: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        return fc.set_agent_paused(name, True, changed_by=owner)
+
+    @app.post("/agents/{name}/resume", response_model=schemas.AgentInfo, responses=schemas.OWNER_ERRORS)
+    def resume_agent(name: str, owner: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        return fc.set_agent_paused(name, False, changed_by=owner)
+
+    @app.get("/briefings/latest", response_model=schemas.BriefingOut, responses=schemas.OWNER_ERRORS)
+    def latest_briefing(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        """Model-written text: show as plain text only. 404 until the first briefing."""
+        return fc.latest_briefing()
 
     # --- AI investigation (Milestone 2) ----------------------------------
 

@@ -182,6 +182,8 @@ legend { font-weight: 600; font-size: 0.8rem; color: var(--text-2); margin-botto
 .state-awaiting_approval { color: var(--pending); background: var(--pending-soft); }
 .state-awaiting_external_outcome { color: var(--text-2); background: var(--surface-3); }
 .state-resolved { color: var(--money); background: var(--money-soft); }
+.state-escalated { color: var(--danger); background: var(--danger-soft); }
+.status-superseded { color: var(--text-2); background: var(--surface-3); }
 .status-proposed, .status-approved { color: var(--pending); background: var(--pending-soft); }
 .status-queued, .status-dispatched, .status-follow_up_due { color: var(--accent); background: var(--accent-soft); }
 .status-executed_simulated { color: var(--money); background: var(--money-soft); }

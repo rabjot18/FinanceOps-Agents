@@ -510,13 +510,17 @@ class MigrationV3Tests(unittest.TestCase):
             core.create_invoice("i", "c", 500)
             core.add_evidence("e", "i", "terms")
             core.propose("a", "i", "collection_reminder", ["e"])
-            # Rewind to a Milestone 1 (v2) database by dropping v3 and v4 objects.
+            # Rewind to a Milestone 1 (v2) database by dropping v3, v4 and v5 objects.
             v4_tables = ("policies", "contacts", "approvals", "outbox", "jobs",
                          "case_verifications", "sim_clock")
+            v5_tables = ("events", "activity", "escalations", "autonomy_state",
+                         "agent_controls", "briefings", "sim_playback", "generator_runs")
             with core.transaction():
-                for sql in (*(f"DROP TABLE {t}" for t in v4_tables),
+                for sql in (*(f"DROP TABLE {t}" for t in v4_tables + v5_tables),
+                            "ALTER TABLE invoices DROP COLUMN due_at",
                             *(f"ALTER TABLE actions DROP COLUMN {c}"
-                              for c in ("payload", "payload_hash", "rationale")),
+                              for c in ("payload", "payload_hash", "rationale",
+                                        "autonomy", "superseded_by")),
                             "DROP TABLE agent_tool_calls", "DROP TABLE agent_runs",
                             "ALTER TABLE actions DROP COLUMN proposed_by",
                             "UPDATE schema_meta SET version=2"):

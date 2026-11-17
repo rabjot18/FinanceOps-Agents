@@ -14,6 +14,7 @@ inbox; a follow-up job checks for payment later; and a case resolves only when
 recorded settlements add up to the invoice total (stored as a verification).
 """
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -22,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 import messages
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 ACTION_KINDS = {"collection_reminder", "request_information"}
 # Action status after the owner's step, by stage. "executed_simulated" is the
@@ -47,6 +48,40 @@ AGENT_RUN_OUTCOMES = {"proposed", "no_proposal", "escalated", "failed"}
 # A run still "running" after this long was killed mid-way (crash, restart);
 # the next investigation of that case marks it failed instead of waiting on it.
 STALE_RUN_SECONDS = 15 * 60
+
+# --- Milestone 5: autonomy, agents, escalations ----------------------------
+AUTONOMY_MODES = {"auto", "approve", "blocked"}
+DEFAULT_CADENCE_DAYS = [3, 7, 14]  # reminder days after the due date
+AUTO_REMINDER_LIMIT_CENTS = 500_000  # CAD 5,000: the owner's chosen default
+# Suggested rules for a new policy. Checked in order; the first match decides;
+# no match means the owner approves. Stored policies from before Milestone 5
+# have no rules, so nothing runs automatically until the owner saves new ones.
+DEFAULT_AUTONOMY_RULES = [
+    {"id": "reminder-small", "action_kind": "collection_reminder", "mode": "auto",
+     "max_amount_cents": AUTO_REMINDER_LIMIT_CENTS, "require_undisputed": True,
+     "require_evidence": True,
+     "description": "Routine reminder on an undisputed invoice under CAD 5,000"},
+    {"id": "request-info", "action_kind": "request_information", "mode": "auto",
+     "max_amount_cents": None, "require_undisputed": False, "require_evidence": False,
+     "description": "Ask the customer for missing information"},
+]
+# The agents the orchestrator may run. Models are configurable per agent.
+AGENTS = {
+    "collections": {"title": "Collections agent", "can_write": True,
+                    "model_env": "FINANCEOPS_MODEL", "default_model": "claude-opus-5-5"},
+    "briefing": {"title": "Owner briefing agent", "can_write": False,
+                 "model_env": "FINANCEOPS_BRIEFING_MODEL", "default_model": "claude-haiku-5-5"},
+}
+ACTIVITY_KINDS = {
+    "event_ingested", "case_state_changed", "action_proposed", "action_auto_approved",
+    "action_approved", "action_rejected", "action_superseded", "message_queued",
+    "message_sent", "message_cancelled", "agent_run_started", "agent_run_finished",
+    "escalation_opened", "escalation_resolved", "briefing_published",
+    "autonomy_paused", "autonomy_resumed", "agent_paused", "agent_resumed",
+    "policy_changed"}
+CASE_LIST_SORTS = {"updated", "outstanding", "overdue", "customer"}
+MAX_PLAYBACK_SPEED = 7 * 24 * 60  # simulated minutes per real second (one week)
+_RULE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
 class NotFound(ValueError):
@@ -229,6 +264,82 @@ _SCHEMA_V4 = [
     "INSERT INTO sim_clock VALUES (1, 0)",
 ]
 
+_SCHEMA_V5 = [
+    # Milestone 5. Due dates drive the reminder cadence.
+    "ALTER TABLE invoices ADD COLUMN due_at TEXT",
+    # The autonomy decision (JSON) made by code when the action was stored,
+    # and the newer action that replaced this one after a replan.
+    "ALTER TABLE actions ADD COLUMN autonomy TEXT",
+    "ALTER TABLE actions ADD COLUMN superseded_by TEXT",
+    # NULL rules: a pre-Milestone 5 policy, under which nothing runs automatically.
+    "ALTER TABLE policies ADD COLUMN autonomy_rules TEXT",
+    "ALTER TABLE policies ADD COLUMN cadence_days TEXT",
+    "ALTER TABLE policies ADD COLUMN daily_model_budget_cents INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agent_runs ADD COLUMN agent TEXT NOT NULL DEFAULT 'collections'",
+    # Jobs gain two kinds; SQLite cannot change a CHECK, so rebuild the table.
+    """CREATE TABLE jobs_v5 (
+        id TEXT PRIMARY KEY, invoice_id TEXT NOT NULL REFERENCES invoices(id),
+        kind TEXT NOT NULL CHECK(kind IN
+            ('settlement_check', 'investigate', 'cadence_step', 'briefing')),
+        ref TEXT, due_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'done', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0, detail TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )""",
+    "INSERT INTO jobs_v5 SELECT id, invoice_id, kind, ref, due_at, status, attempts, detail, "
+    "created_at, updated_at FROM jobs",
+    "DROP TABLE jobs",
+    "ALTER TABLE jobs_v5 RENAME TO jobs",
+    # Every input, normalized, with where it came from. dedupe_key makes a
+    # replayed or re-imported event a no-op.
+    """CREATE TABLE events (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+        source TEXT NOT NULL CHECK(source IN
+            ('scenario', 'generator', 'demo', 'api', 'stripe', 'plaid', 'csv')),
+        source_ref TEXT, dedupe_key TEXT NOT NULL UNIQUE,
+        synthetic INTEGER NOT NULL, payload TEXT NOT NULL,
+        received_at TEXT NOT NULL, routed_at TEXT
+    )""",
+    # What the system did, for the owner's live feed. Written by code.
+    """CREATE TABLE activity (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, actor TEXT NOT NULL,
+        case_id TEXT, ref TEXT, summary TEXT NOT NULL,
+        synthetic INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+    )""",
+    *_append_only("activity"),
+    """CREATE TABLE escalations (
+        id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id),
+        reason TEXT NOT NULL, question TEXT NOT NULL, evidence_ids TEXT NOT NULL,
+        raised_by TEXT NOT NULL, created_at TEXT NOT NULL,
+        resolved_at TEXT, resolved_by TEXT, resolution_note TEXT
+    )""",
+    # The owner's kill switch for automatic execution.
+    """CREATE TABLE autonomy_state (
+        id INTEGER PRIMARY KEY CHECK(id = 1), paused INTEGER NOT NULL,
+        changed_by TEXT, changed_at TEXT, reason TEXT
+    )""",
+    "INSERT INTO autonomy_state VALUES (1, 0, NULL, NULL, NULL)",
+    """CREATE TABLE agent_controls (
+        name TEXT PRIMARY KEY, paused INTEGER NOT NULL, changed_by TEXT, changed_at TEXT
+    )""",
+    """CREATE TABLE briefings (
+        id TEXT PRIMARY KEY, run_id TEXT, period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+        headline TEXT NOT NULL, sections TEXT NOT NULL, created_at TEXT NOT NULL
+    )""",
+    *_append_only("briefings"),
+    # Demo only: whether the simulated clock is playing, and how fast.
+    """CREATE TABLE sim_playback (
+        id INTEGER PRIMARY KEY CHECK(id = 1), playing INTEGER NOT NULL,
+        speed INTEGER NOT NULL, updated_at TEXT
+    )""",
+    "INSERT INTO sim_playback VALUES (1, 0, 60, NULL)",
+    # Demo only: generated businesses and their ground truth (JSON).
+    """CREATE TABLE generator_runs (
+        seed INTEGER PRIMARY KEY, months INTEGER NOT NULL, customers INTEGER NOT NULL,
+        truth TEXT NOT NULL, created_at TEXT NOT NULL
+    )""",
+]
+
 
 def _utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -304,6 +415,9 @@ class FinanceCore:
             if current < 4:
                 for statement in _SCHEMA_V4:
                     self.db.execute(statement)
+            if current < 5:
+                for statement in _SCHEMA_V5:
+                    self.db.execute(statement)
             if current < 2:
                 # Backfill cases only once every table the rules read exists.
                 for row in self.db.execute("SELECT id FROM invoices ORDER BY id").fetchall():
@@ -351,16 +465,32 @@ class FinanceCore:
         )
         return result
 
-    def create_invoice(self, invoice_id, customer, total_cents):
+    @staticmethod
+    def _timestamp(value, name):
+        """An ISO 8601 date-time with a time zone, normalized to UTC."""
+        if type(value) is not str:
+            raise InvalidInput(f"{name} must be an ISO 8601 date-time")
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            raise InvalidInput(f"{name} must be an ISO 8601 date-time") from None
+        if parsed.tzinfo is None:
+            raise InvalidInput(f"{name} needs a time zone, e.g. 2026-11-30T00:00:00+00:00")
+        return parsed.astimezone(timezone.utc).isoformat()
+
+    def create_invoice(self, invoice_id, customer, total_cents, due_at=None):
         self.money(total_cents)
+        if due_at is not None:
+            due_at = self._timestamp(due_at, "due_at")
         with self.transaction():
             prior = self.db.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
             if prior:
-                if prior["customer"] != customer or prior["total"] != total_cents:
+                if (prior["customer"] != customer or prior["total"] != total_cents
+                        or (due_at is not None and prior["due_at"] != due_at)):
                     raise Conflict("Invoice ID reused with different data")
             else:
-                self.db.execute("INSERT INTO invoices(id,customer,total) VALUES(?,?,?)",
-                                (invoice_id, customer, total_cents))
+                self.db.execute("INSERT INTO invoices(id,customer,total,due_at) VALUES(?,?,?,?)",
+                                (invoice_id, customer, total_cents, due_at))
                 self._record(invoice_id, f"invoice:{invoice_id}", "invoice_created")
         return self.invoice(invoice_id)
 
@@ -487,6 +617,7 @@ class FinanceCore:
         action = self.action(action_id)
         action["evidence_ids"] = json.loads(action["evidence_ids"])
         action["payload"] = json.loads(action["payload"]) if action["payload"] else None
+        action["autonomy"] = json.loads(action["autonomy"]) if action["autonomy"] else None
         approval = self._latest_approval(action_id)
         action["approval"] = dict(approval) if approval else None
         if approval and approval["decision"] == "approved":
@@ -696,7 +827,67 @@ class FinanceCore:
             f"  AND a.status IN ({','.join('?' * len(_PENDING))})) AS pending_actions "
             "FROM cases c JOIN invoices i ON i.id = c.invoice_id "
             "ORDER BY c.updated_at DESC, c.id", _PENDING).fetchall()
-        return [{**dict(r), "currency": "CAD"} for r in rows]
+        now = _at(self.clock())
+        result = []
+        for r in rows:
+            row = {**dict(r), "currency": "CAD"}
+            row["due_at"] = self.db.execute("SELECT due_at FROM invoices WHERE id=?",
+                                            (r["invoice_id"],)).fetchone()[0]
+            row["days_overdue"] = self._days_overdue(row["due_at"], r["outstanding_cents"], now)
+            row["open_escalations"] = self.db.execute(
+                "SELECT COUNT(*) FROM escalations WHERE case_id=? AND resolved_at IS NULL",
+                (r["id"],)).fetchone()[0]
+            row["needs_owner"] = r["pending_actions"] > 0 or row["open_escalations"] > 0
+            row["handled_by"] = self._handled_by(r["invoice_id"])
+            result.append(row)
+        return result
+
+    @staticmethod
+    def _days_overdue(due_at, outstanding_cents, now):
+        if due_at is None or outstanding_cents <= 0 or now <= _at(due_at):
+            return None
+        return (now - _at(due_at)).days
+
+    def _handled_by(self, invoice_id):
+        """Who moved this case last: a policy rule, the owner, or the agent."""
+        latest = self.db.execute(
+            "SELECT proposed_by, approved_by FROM actions WHERE invoice_id=? "
+            "ORDER BY rowid DESC LIMIT 1", (invoice_id,)).fetchone()
+        if latest is None:
+            return "none"
+        if (latest["approved_by"] or "").startswith("policy:"):
+            return "policy"
+        if latest["approved_by"]:
+            return "owner"
+        return "agent" if latest["proposed_by"].startswith("agent:") else "owner"
+
+    def case_list(self, state=None, q=None, sort="updated", limit=50, cursor=None):
+        """One page of the case list, filtered and sorted by the backend."""
+        if sort not in CASE_LIST_SORTS:
+            raise InvalidInput(f"sort must be one of {sorted(CASE_LIST_SORTS)}")
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise InvalidInput("limit must be an integer from 1 to 200")
+        if cursor is not None and not (cursor.isdigit() and len(cursor) <= 9):
+            raise InvalidInput("cursor must come from a previous page")
+        rows = self.cases()
+        if state is not None:
+            rows = [r for r in rows if r["state"] == state]
+        if q:
+            needle = q.casefold()
+            rows = [r for r in rows if needle in r["customer"].casefold()
+                    or needle in r["invoice_id"].casefold() or needle in r["id"].casefold()]
+        if sort == "outstanding":
+            rows.sort(key=lambda r: (-r["outstanding_cents"], r["id"]))
+        elif sort == "overdue":
+            rows.sort(key=lambda r: (-(r["days_overdue"] if r["days_overdue"] is not None
+                                       else -1), r["id"]))
+        elif sort == "customer":
+            rows.sort(key=lambda r: (r["customer"].casefold(), r["id"]))
+        start = int(cursor) if cursor else 0
+        page = rows[start:start + limit]
+        more = start + limit < len(rows)
+        return {"cases": page, "total": len(rows),
+                "next_cursor": str(start + limit) if more else None}
 
     def workspace(self, case_id):
         """Everything the owner reviews for one case, read as one snapshot.
@@ -725,6 +916,8 @@ class FinanceCore:
                 "contact_on_file": contact,
                 "sending_enabled": policy is not None and contact,
                 "reminders_sent": self.reminders_sent(invoice_id),
+                "escalations": self.escalations(case_id=case_id),
+                "autonomy": self.autonomy_status(),
                 "now": self.clock(),
                 "simulated_time": self.simulated_time,
             }
@@ -849,27 +1042,90 @@ class FinanceCore:
 
     def policy(self):
         row = self.db.execute("SELECT * FROM policies ORDER BY version DESC LIMIT 1").fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        policy = dict(row)
+        policy["autonomy_rules"] = json.loads(row["autonomy_rules"] or "[]")
+        policy["cadence_days"] = json.loads(row["cadence_days"] or "[]")
+        return policy
 
-    def set_policy(self, approval_ttl_minutes, follow_up_days, max_reminders, created_by="owner"):
+    @staticmethod
+    def _check_rules(rules):
+        if type(rules) is not list or len(rules) > 20:
+            raise InvalidInput("autonomy_rules must be a list of at most 20 rules")
+        keys = {"id", "action_kind", "mode", "max_amount_cents", "require_undisputed",
+                "require_evidence", "description"}
+        seen = set()
+        for rule in rules:
+            if type(rule) is not dict or set(rule) != keys:
+                raise InvalidInput(f"each rule needs exactly these fields: {sorted(keys)}")
+            if type(rule["id"]) is not str or not _RULE_ID.match(rule["id"]) or rule["id"] in seen:
+                raise InvalidInput("rule ids must be unique, lower-case letters, digits and -")
+            seen.add(rule["id"])
+            if rule["action_kind"] not in ACTION_KINDS:
+                raise InvalidInput(f"rule {rule['id']}: unknown action_kind")
+            if rule["mode"] not in AUTONOMY_MODES:
+                raise InvalidInput(f"rule {rule['id']}: mode must be auto, approve or blocked")
+            cap = rule["max_amount_cents"]
+            if cap is not None and (type(cap) is not int or cap <= 0):
+                raise InvalidInput(f"rule {rule['id']}: max_amount_cents must be positive cents or null")
+            if type(rule["require_undisputed"]) is not bool or type(rule["require_evidence"]) is not bool:
+                raise InvalidInput(f"rule {rule['id']}: require_* fields must be true or false")
+            if type(rule["description"]) is not str or not 1 <= len(rule["description"]) <= 200:
+                raise InvalidInput(f"rule {rule['id']}: description must be 1-200 characters")
+
+    @staticmethod
+    def _check_cadence(days):
+        if (type(days) is not list or len(days) > 10
+                or any(type(d) is not int or not 1 <= d <= 365 for d in days)
+                or days != sorted(set(days))):
+            raise InvalidInput("cadence_days must be up to 10 increasing whole days from 1 to 365")
+
+    def set_policy(self, approval_ttl_minutes, follow_up_days, max_reminders, created_by="owner",
+                   autonomy_rules=None, cadence_days=None, daily_model_budget_cents=None):
         """Store a new policy version. Approvals given under an older version
-        stop matching (the version is part of the approved message)."""
+        stop matching (the version is part of the approved message).
+        The Milestone 5 fields are optional: None keeps the current value."""
         for name, value, low, high in (("approval_ttl_minutes", approval_ttl_minutes, 1, 7 * 24 * 60),
                                        ("follow_up_days", follow_up_days, 1, 365),
                                        ("max_reminders", max_reminders, 0, 20)):
             if type(value) is not int or not low <= value <= high:
                 raise InvalidInput(f"{name} must be an integer from {low} to {high}")
+        if autonomy_rules is not None:
+            self._check_rules(autonomy_rules)
+        if cadence_days is not None:
+            self._check_cadence(cadence_days)
+        if daily_model_budget_cents is not None and (
+                type(daily_model_budget_cents) is not int
+                or not 0 <= daily_model_budget_cents <= 1_000_000):
+            raise InvalidInput("daily_model_budget_cents must be an integer from 0 to 1000000")
         with self.transaction():
             latest = self.policy()
-            values = (approval_ttl_minutes, follow_up_days, max_reminders)
-            if latest and (latest["approval_ttl_minutes"], latest["follow_up_days"],
-                           latest["max_reminders"]) == values:
+            if autonomy_rules is None:
+                autonomy_rules = latest["autonomy_rules"] if latest else []
+            if cadence_days is None:
+                cadence_days = latest["cadence_days"] if latest else []
+            if daily_model_budget_cents is None:
+                daily_model_budget_cents = latest["daily_model_budget_cents"] if latest else 0
+            values = (approval_ttl_minutes, follow_up_days, max_reminders,
+                      autonomy_rules, cadence_days, daily_model_budget_cents)
+            if latest and tuple(latest[k] for k in (
+                    "approval_ttl_minutes", "follow_up_days", "max_reminders", "autonomy_rules",
+                    "cadence_days", "daily_model_budget_cents")) == values:
                 return latest  # unchanged: keep the version, keep approvals valid
             version = (latest["version"] if latest else 0) + 1
-            self.db.execute("INSERT INTO policies VALUES(?,?,?,?,?,?)",
-                            (version, *values, created_by, self.clock()))
+            now = self.clock()
+            self.db.execute(
+                "INSERT INTO policies(version, approval_ttl_minutes, follow_up_days, max_reminders, "
+                "autonomy_rules, cadence_days, daily_model_budget_cents, created_by, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (version, approval_ttl_minutes, follow_up_days, max_reminders,
+                 json.dumps(autonomy_rules), json.dumps(cadence_days), daily_model_budget_cents,
+                 created_by, now))
             for row in self.db.execute("SELECT invoice_id FROM cases WHERE state != 'resolved'").fetchall():
                 self._record(row["invoice_id"], f"policy:v{version}", "policy_changed")
+            self._activity("policy_changed", created_by, f"Policy version {version} saved",
+                           ref=f"policy:v{version}")
         return self.policy()
 
     def contact_on_file(self, invoice_id):
@@ -1108,6 +1364,225 @@ class FinanceCore:
             "currency,settlement_ids,method,verified_at) VALUES(?,?,?,?,?,?,?,?)",
             (case_id, invoice["version"], invoice["total_cents"], settled, "CAD",
              json.dumps([r["id"] for r in rows]), "settlements_sum_to_total", now))
+
+    # --- Milestone 5: activity, autonomy switch, escalations, agents -----
+
+    def _activity(self, kind, actor, summary, case_id=None, ref=None, synthetic=True):
+        """Append one item to the owner's activity feed. Call inside the
+        caller's transaction. The summary is written by code, never the model."""
+        if kind not in ACTIVITY_KINDS:
+            raise ValueError(f"unknown activity kind {kind}")  # a bug, not bad input
+        self.db.execute(
+            "INSERT INTO activity(kind, actor, case_id, ref, summary, synthetic, created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (kind, actor, case_id, ref, summary, int(bool(synthetic)), self.clock()))
+
+    def activity(self, after=0, limit=100):
+        if type(after) is not int or after < 0:
+            raise InvalidInput("after must be a non-negative integer")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise InvalidInput("limit must be an integer from 1 to 500")
+        rows = [dict(r) for r in self.db.execute(
+            "SELECT * FROM activity WHERE seq > ? ORDER BY seq LIMIT ?", (after, limit))]
+        for row in rows:
+            row["synthetic"] = bool(row["synthetic"])
+        return {"items": rows, "cursor": rows[-1]["seq"] if rows else after}
+
+    def autonomy_status(self):
+        row = self.db.execute("SELECT * FROM autonomy_state").fetchone()
+        return {"paused": bool(row["paused"]), "changed_by": row["changed_by"],
+                "changed_at": row["changed_at"], "reason": row["reason"]}
+
+    def set_autonomy_paused(self, paused, changed_by="owner", reason=None):
+        """The owner's kill switch. While paused, nothing executes automatically;
+        proposals still wait for approval as usual."""
+        if reason is not None and (type(reason) is not str or len(reason) > 500):
+            raise InvalidInput("reason must be at most 500 characters")
+        with self.transaction():
+            if self.autonomy_status()["paused"] == bool(paused):
+                return self.autonomy_status()  # already so: no new activity
+            self.db.execute(
+                "UPDATE autonomy_state SET paused=?, changed_by=?, changed_at=?, reason=?",
+                (int(bool(paused)), changed_by, self.clock(), reason))
+            self._activity("autonomy_paused" if paused else "autonomy_resumed", changed_by,
+                           "Automatic actions paused" if paused else "Automatic actions resumed")
+        return self.autonomy_status()
+
+    @staticmethod
+    def _escalation_out(row):
+        return {**dict(row), "evidence_ids": json.loads(row["evidence_ids"])}
+
+    def escalations(self, case_id=None, open_only=False):
+        sql, args = "SELECT * FROM escalations WHERE 1=1", []
+        if case_id is not None:
+            sql, args = sql + " AND case_id=?", [*args, case_id]
+        if open_only:
+            sql += " AND resolved_at IS NULL"
+        return [self._escalation_out(r) for r in self.db.execute(
+            sql + " ORDER BY created_at DESC, id", args)]
+
+    def resolve_escalation(self, escalation_id, resolved_by="owner", note=None):
+        if note is not None and (type(note) is not str or len(note) > 500):
+            raise InvalidInput("note must be at most 500 characters")
+        with self.transaction():
+            row = self.db.execute("SELECT * FROM escalations WHERE id=?",
+                                  (escalation_id,)).fetchone()
+            if row is None:
+                raise NotFound("Unknown escalation")
+            if row["resolved_at"] is not None:
+                raise Conflict("Escalation is already resolved")
+            self.db.execute(
+                "UPDATE escalations SET resolved_at=?, resolved_by=?, resolution_note=? WHERE id=?",
+                (self.clock(), resolved_by, note, escalation_id))
+            self._activity("escalation_resolved", resolved_by, "Escalation resolved by the owner",
+                           case_id=row["case_id"], ref=escalation_id)
+            row = self.db.execute("SELECT * FROM escalations WHERE id=?",
+                                  (escalation_id,)).fetchone()
+        return self._escalation_out(row)
+
+    def _owner_approvals(self):
+        """Actions waiting for the owner (approve or execute), oldest first.
+        Same test as _derive_state: only valid plans on the current version."""
+        result = []
+        for row in self.db.execute(
+                f"SELECT * FROM actions WHERE status IN ({','.join('?' * len(_PENDING))}) "
+                "ORDER BY rowid", _PENDING).fetchall():
+            invoice = self.invoice(row["invoice_id"])
+            if row["version"] != invoice["version"]:
+                continue
+            try:
+                self.validate_action(dict(row))
+            except Conflict:
+                continue
+            result.append((invoice, row["id"]))
+        return result
+
+    def attention(self):
+        """The owner's "Needs you" queue: approvals and open escalations."""
+        self.db.execute("BEGIN")
+        try:
+            approvals = [{"case_id": self.case_id(inv["id"]), "customer": inv["customer"],
+                          "outstanding_cents": inv["outstanding_cents"], "currency": inv["currency"],
+                          "action": {**self.action_detail(action_id), "simulated": True}}
+                         for inv, action_id in self._owner_approvals()]
+            escalations = []
+            for esc in reversed(self.escalations(open_only=True)):  # oldest first
+                inv = self.invoice(self._case_row(esc["case_id"])["invoice_id"])
+                escalations.append({"customer": inv["customer"],
+                                    "outstanding_cents": inv["outstanding_cents"],
+                                    "currency": inv["currency"], "escalation": esc})
+            return {"approvals": approvals, "escalations": escalations,
+                    "autonomy": self.autonomy_status()}
+        finally:
+            self.db.rollback()
+
+    def summary(self):
+        """Headline numbers for the owner's home screen."""
+        self.db.execute("BEGIN")
+        try:
+            now = self.clock()
+            week_ago = _later(now, days=-7)
+            open_rows = [r for r in self.cases() if r["state"] != "resolved"]
+            overdue = [r for r in open_rows if r["days_overdue"] is not None]
+            open_escalations = self.db.execute(
+                "SELECT COUNT(*) FROM escalations WHERE resolved_at IS NULL").fetchone()[0]
+            return {
+                "currency": "CAD",
+                "outstanding_cents": sum(r["outstanding_cents"] for r in open_rows),
+                "overdue_cents": sum(r["outstanding_cents"] for r in overdue),
+                "open_cases": len(open_rows),
+                "overdue_cases": len(overdue),
+                "awaiting_owner": len(self._owner_approvals()) + open_escalations,
+                "auto_handled_7d": self.db.execute(
+                    "SELECT COUNT(*) FROM approvals WHERE decision='approved' "
+                    "AND decided_by LIKE 'policy:%' AND decided_at >= ?", (week_ago,)).fetchone()[0],
+                "resolved_7d": self.db.execute(
+                    "SELECT COUNT(*) FROM case_verifications WHERE verified_at >= ?",
+                    (week_ago,)).fetchone()[0],
+                "model_spend_today_cents": None,  # cost tracking arrives with the agent work
+                "autonomy_paused": self.autonomy_status()["paused"],
+                "now": now,
+                "simulated_time": self.simulated_time,
+            }
+        finally:
+            self.db.rollback()
+
+    def latest_briefing(self):
+        row = self.db.execute(
+            "SELECT * FROM briefings ORDER BY created_at DESC, id DESC LIMIT 1").fetchone()
+        if row is None:
+            raise NotFound("No briefing yet")
+        return {**dict(row), "sections": json.loads(row["sections"])}
+
+    @staticmethod
+    def agent_model(name):
+        spec = AGENTS[name]
+        return os.environ.get(spec["model_env"], spec["default_model"])
+
+    def _agent_info(self, name):
+        spec = AGENTS[name]
+        now = self.clock()
+        today = _at(now).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        control = self.db.execute("SELECT paused FROM agent_controls WHERE name=?",
+                                  (name,)).fetchone()
+        outcomes = {r["status"]: r["n"] for r in self.db.execute(
+            "SELECT status, COUNT(*) AS n FROM agent_runs WHERE agent=? AND started_at >= ? "
+            "GROUP BY status", (name, _later(now, days=-7)))}
+        return {
+            "name": name, "title": spec["title"], "model": self.agent_model(name),
+            "can_write": spec["can_write"], "paused": bool(control and control["paused"]),
+            "runs_today": self.db.execute(
+                "SELECT COUNT(*) FROM agent_runs WHERE agent=? AND started_at >= ?",
+                (name, today)).fetchone()[0],
+            "outcomes_7d": outcomes,
+            "last_run_at": self.db.execute(
+                "SELECT MAX(started_at) FROM agent_runs WHERE agent=?", (name,)).fetchone()[0],
+        }
+
+    def agents(self):
+        return [self._agent_info(name) for name in AGENTS]
+
+    def set_agent_paused(self, name, paused, changed_by="owner"):
+        if name not in AGENTS:
+            raise NotFound("Unknown agent")
+        with self.transaction():
+            if self._agent_info(name)["paused"] != bool(paused):
+                self.db.execute(
+                    "INSERT INTO agent_controls(name, paused, changed_by, changed_at) VALUES(?,?,?,?) "
+                    "ON CONFLICT(name) DO UPDATE SET paused=excluded.paused, "
+                    "changed_by=excluded.changed_by, changed_at=excluded.changed_at",
+                    (name, int(bool(paused)), changed_by, self.clock()))
+                self._activity("agent_paused" if paused else "agent_resumed", changed_by,
+                               f"{AGENTS[name]['title']} {'paused' if paused else 'resumed'}",
+                               ref=f"agent:{name}")
+        return self._agent_info(name)
+
+    # --- demo clock playback (Milestone 5) -------------------------------
+
+    def clock_status(self):
+        if not self.simulated_time:
+            raise Conflict("Simulated time is off; it is only available in the demo")
+        playback = self.db.execute("SELECT * FROM sim_playback").fetchone()
+        return {"now": self.clock(), "simulated": True, "playing": bool(playback["playing"]),
+                "speed": playback["speed"],
+                "offset_seconds": self.db.execute(
+                    "SELECT offset_seconds FROM sim_clock").fetchone()[0]}
+
+    def set_playback(self, action, speed=None):
+        """play / pause / speed. The worker loop moves the clock while playing."""
+        if not self.simulated_time:
+            raise Conflict("Simulated time is off; it is only available in the demo")
+        if action not in ("play", "pause", "speed"):
+            raise InvalidInput("action must be play, pause or speed")
+        if action == "speed" and (type(speed) is not int or not 1 <= speed <= MAX_PLAYBACK_SPEED):
+            raise InvalidInput(f"speed must be an integer from 1 to {MAX_PLAYBACK_SPEED}")
+        with self.transaction():
+            if action == "speed":
+                self.db.execute("UPDATE sim_playback SET speed=?, updated_at=?", (speed, self.clock()))
+            else:
+                self.db.execute("UPDATE sim_playback SET playing=?, updated_at=?",
+                                (int(action == "play"), self.clock()))
+        return self.clock_status()
 
     def _derive_state(self, invoice_id):
         """Work out where the case stands from stored facts only.

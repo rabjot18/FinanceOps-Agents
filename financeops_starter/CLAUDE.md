@@ -121,6 +121,29 @@ independently redesign the same interfaces.
 - Browser tests (`npm run e2e`) start their own server and database; they
   never click "Investigate with AI" or enable re-investigations.
 
+## Autonomy and orchestration rules (Milestone 5, see MILESTONE_5_PLAN.md)
+- Only an action whose autonomy rule evaluates to `auto` under the current
+  policy version may execute without the owner. Code evaluates the rules after
+  the proposal is stored; the model cannot read or change autonomy rules.
+- An automatic action still goes through `approve()` and `execute()` with
+  `approver = "policy:v<n>/rule:<id>"`, so hash binding, expiry, version checks
+  and the outbox apply unchanged. Store the decision in `actions.autonomy`.
+- Policies saved before Milestone 5 have no rules: nothing runs automatically
+  until the owner saves rules. Default threshold for automatic reminders is
+  CAD 5,000 (`core.AUTO_REMINDER_LIMIT_CENTS`).
+- The owner's kill switch (`autonomy_state`) and per-agent pauses
+  (`agent_controls`) are checked before every automatic execution or agent run.
+- Routing is code (orchestrator), not a model. Routine reminders need no model
+  call. At most 2 replans per triggering event and the policy's daily model
+  budget; exceeding either opens an escalation instead.
+- Every automatic step writes an `activity` row with a code-written summary.
+  Activity, briefings and case events are append-only.
+- Inputs enter through one ingest path into `events` with source, source
+  reference, a unique dedupe key and a synthetic flag.
+- Routes frozen in step 0 whose logic lands later answer 503 "Not built yet"
+  (`api._not_built`); never return made-up data from them.
+- Live UI updates poll `GET /activity?after=<cursor>`; no server push yet.
+
 ## Current limits
 The worker is a single process (run one per database). The only delivery
 channel is the simulated inbox; no real provider or outgoing payments
