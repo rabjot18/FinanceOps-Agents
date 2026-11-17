@@ -2,23 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
-import { HASH, TOKEN, callsTo, caseList, inbox, mockFetch, proposedAction, scenarios, workspace } from './test/fixtures';
+import {
+  TOKEN,
+  activity,
+  activityItem,
+  attention,
+  autonomyPaused,
+  callsTo,
+  caseList,
+  mockFetch,
+  shellRoutes,
+  signedInAt,
+  summary,
+} from './test/fixtures';
 
-const WS = 'GET /cases/case-INV-1001/workspace';
-
-function signedInAt(caseId?: string) {
-  sessionStorage.setItem('financeops.ownerToken', TOKEN);
-  if (caseId) window.location.hash = `case=${caseId}`;
-}
-
-const baseRoutes = {
-  'GET /cases': { body: caseList },
-  'GET /demo/scenarios': { body: scenarios },
-};
+const BANNER = 'Synthetic data · simulated delivery · no real money moves';
 
 describe('token entry', () => {
-  it('asks for the token, labels it demo-only, then loads cases with it', async () => {
-    const fetchMock = mockFetch(baseRoutes);
+  it('asks for the token, labels it demo-only, then loads the home page with it', async () => {
+    const fetchMock = mockFetch(shellRoutes());
     const user = userEvent.setup();
     render(<App />);
 
@@ -28,14 +30,14 @@ describe('token entry', () => {
     await user.type(screen.getByLabelText('Owner token'), TOKEN);
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
-    expect(await screen.findByText('Maple Synthetic Ltd')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Needs you' })).toBeInTheDocument();
     expect(sessionStorage.getItem('financeops.ownerToken')).toBe(TOKEN);
-    expect(callsTo(fetchMock, 'GET /cases')[0]?.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+    await waitFor(() => expect(callsTo(fetchMock, 'GET /attention')[0]?.headers.Authorization).toBe(`Bearer ${TOKEN}`));
   });
 
   it('goes back to token entry and forgets the token on 401', async () => {
-    mockFetch({ ...baseRoutes, 'GET /cases': { status: 401, body: { detail: 'Owner authentication required' } } });
-    signedInAt();
+    mockFetch({ ...shellRoutes(), 'GET /summary': { status: 401, body: { detail: 'Owner authentication required' } } });
+    signedInAt('/');
     render(<App />);
 
     expect(await screen.findByLabelText('Owner token')).toBeInTheDocument();
@@ -43,233 +45,117 @@ describe('token entry', () => {
     expect(sessionStorage.getItem('financeops.ownerToken')).toBeNull();
   });
 
-  it('clears the token on request', async () => {
-    mockFetch(baseRoutes);
-    signedInAt();
+  it('a 401 on an owner action also ends the session', async () => {
+    mockFetch({
+      ...shellRoutes(),
+      'GET /attention': { body: attention() },
+      'POST /actions/act-1/approve': { status: 401, body: { detail: 'Owner authentication required' } },
+    });
+    signedInAt('/');
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText('Maple Synthetic Ltd');
-    await user.click(screen.getByRole('button', { name: 'Clear token' }));
+    const queue = await screen.findByRole('list', { name: 'Actions waiting for you' });
+    await user.click(within(queue).getAllByRole('button', { name: 'Approve this exact message' })[0] as HTMLElement);
+    expect(await screen.findByLabelText('Owner token')).toBeInTheDocument();
+  });
+
+  it('clears the token on request', async () => {
+    mockFetch(shellRoutes());
+    signedInAt('/');
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Clear token' }));
     expect(screen.getByLabelText('Owner token')).toBeInTheDocument();
     expect(sessionStorage.getItem('financeops.ownerToken')).toBeNull();
   });
 });
 
-describe('loading and errors', () => {
-  it('shows a loading state, then the case list with backend-formatted money', async () => {
-    mockFetch(baseRoutes);
-    signedInAt();
-    render(<App />);
-    expect(screen.getByText('Loading cases…')).toBeInTheDocument();
-    const row = await screen.findByRole('button', { name: /Maple Synthetic Ltd/ });
-    expect(row).toHaveTextContent('awaiting approval');
-    expect(row).toHaveTextContent('$1,250.00');
-    expect(row).toHaveTextContent('1 pending action');
-  });
-
-  it('shows a network failure with a retry that works', async () => {
-    mockFetch({ ...baseRoutes, 'GET /cases': ['network-error', { body: caseList }] });
-    signedInAt();
-    const user = userEvent.setup();
-    render(<App />);
-    expect(await screen.findByText(/Could not reach the FinanceOps server/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByText('Maple Synthetic Ltd')).toBeInTheDocument();
-  });
-});
-
-describe('case workspace', () => {
-  it('renders evidence containing <script> as plain text, labelled untrusted', async () => {
-    mockFetch({ ...baseRoutes, [WS]: { body: workspace() } });
-    signedInAt('case-INV-1001');
-    const { container } = render(<App />);
-
-    const evidence = await screen.findByRole('article', { name: 'Evidence ev-1' });
-    expect(evidence).toHaveTextContent('<script>alert("x")</script>');
-    expect(within(evidence).getByText('Untrusted')).toBeInTheDocument();
-    expect(container.querySelector('script')).toBeNull();
-  });
-
-  it('labels the message and delivery as simulated', async () => {
-    mockFetch({ ...baseRoutes, [WS]: { body: workspace() } });
-    signedInAt('case-INV-1001');
-    render(<App />);
-
-    const card = await screen.findByRole('article', { name: 'Action act-1' });
-    expect(within(card).getByText('Simulated delivery')).toBeInTheDocument();
-    expect(within(card).getByText('Simulated')).toBeInTheDocument();
-    expect(within(card).getByText('ap@maple.example')).toBeInTheDocument();
-    expect(within(card).getByText('$1,250.00')).toBeInTheDocument();
-    expect(within(card).getByText('9f2c1e7ab4d0…')).toBeInTheDocument();
-  });
-
-  it('approve sends exactly the payload_hash that was shown, then refetches', async () => {
-    const approved = { ...proposedAction, status: 'approved' as const };
-    const fetchMock = mockFetch({
-      ...baseRoutes,
-      [WS]: [{ body: workspace() }, { body: workspace({ actions: [approved] }) }],
-      'POST /actions/act-1/approve': { body: approved },
-    });
-    signedInAt('case-INV-1001');
-    const user = userEvent.setup();
-    render(<App />);
-
-    await user.click(await screen.findByRole('button', { name: 'Approve this exact message' }));
-
-    expect(callsTo(fetchMock, 'POST /actions/act-1/approve')).toEqual([
-      expect.objectContaining({ body: { payload_hash: HASH } }),
-    ]);
-    expect(await screen.findByRole('button', { name: /Execute/ })).toBeInTheDocument();
-    expect(callsTo(fetchMock, WS).length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('on 409 refetches and shows "this case changed — review again" without retrying', async () => {
-    const fetchMock = mockFetch({
-      ...baseRoutes,
-      [WS]: { body: workspace() },
-      'POST /actions/act-1/approve': { status: 409, body: { detail: 'payload hash does not match' } },
-    });
-    signedInAt('case-INV-1001');
-    const user = userEvent.setup();
-    render(<App />);
-
-    await user.click(await screen.findByRole('button', { name: 'Approve this exact message' }));
-
-    expect(await screen.findByText('This case changed — review again.')).toBeInTheDocument();
-    expect(screen.getByText(/payload hash does not match/)).toBeInTheDocument();
-    await waitFor(() => expect(callsTo(fetchMock, WS).length).toBeGreaterThanOrEqual(2));
-    expect(callsTo(fetchMock, 'POST /actions/act-1/approve')).toHaveLength(1);
-  });
-
-  it('shows the server detail for a 422', async () => {
+describe('app shell', () => {
+  it('shows the synthetic banner and navigation on every page', async () => {
     mockFetch({
-      ...baseRoutes,
-      [WS]: { body: workspace() },
-      'POST /actions/act-1/reject': { status: 422, body: { detail: 'action is not awaiting a decision' } },
+      ...shellRoutes(),
+      'GET /cases': { body: caseList },
+      'GET /agents': { body: { agents: [] } },
     });
-    signedInAt('case-INV-1001');
+    signedInAt('/');
     const user = userEvent.setup();
     render(<App />);
+    const nav = await screen.findByRole('navigation', { name: 'Main' });
 
-    await user.click(await screen.findByRole('button', { name: 'Reject' }));
-    expect(await screen.findByText('action is not awaiting a decision')).toBeInTheDocument();
+    for (const [link, heading] of [
+      ['Cases', 'Cases'],
+      ['Activity', 'Activity'],
+      ['Agents', 'Agents'],
+      ['Needs you', 'Needs you'],
+    ] as const) {
+      await user.click(within(nav).getByRole('link', { name: new RegExp(link) }));
+      expect(await screen.findByRole('heading', { level: 2, name: heading })).toBeInTheDocument();
+      expect(screen.getByText(BANNER)).toBeInTheDocument();
+    }
   });
 
-  it('investigation needs an explicit confirm before the paid call', async () => {
-    const fetchMock = mockFetch({ ...baseRoutes, [WS]: { body: workspace() } });
-    signedInAt('case-INV-1001');
+  it('upgrades an old #case=<id> link to the case page', async () => {
+    mockFetch({ ...shellRoutes(), 'GET /cases/case-X/workspace': { status: 404, body: { detail: 'Unknown case' } } });
+    sessionStorage.setItem('financeops.ownerToken', TOKEN);
+    window.location.hash = '#case=case-X';
+    render(<App />);
+    expect(await screen.findByText('This case does not exist')).toBeInTheDocument();
+  });
+
+  it('kill switch: pausing autonomy needs a confirm and sends the reason', async () => {
+    const fetchMock = mockFetch({
+      ...shellRoutes(),
+      'POST /autonomy/pause': { body: autonomyPaused },
+      'GET /autonomy': [{ body: { ...autonomyPaused, paused: false } }, { body: autonomyPaused }],
+    });
+    signedInAt('/');
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole('button', { name: /Investigate with AI/ }));
-    expect(screen.getByText(/calls a paid Claude model/)).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Pause autonomy' }));
+    const dialog = screen.getByRole('dialog', { name: 'Pause all automatic actions?' });
+    expect(callsTo(fetchMock, 'POST /autonomy/pause')).toHaveLength(0);
+    await user.type(within(dialog).getByLabelText('Reason (optional)'), 'audit');
+    await user.click(within(dialog).getByRole('button', { name: 'Yes, pause autonomy' }));
+
+    expect(await screen.findByText('Autonomy paused', { selector: '.autonomy-pill' })).toBeInTheDocument();
+    expect(callsTo(fetchMock, 'POST /autonomy/pause')[0]?.body).toEqual({ reason: 'audit' });
+    expect(screen.getByRole('button', { name: 'Resume autonomy' })).toBeInTheDocument();
+  });
+
+  it('kill switch: cancel sends nothing', async () => {
+    const fetchMock = mockFetch(shellRoutes());
+    signedInAt('/');
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Pause autonomy' }));
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(callsTo(fetchMock, 'POST /cases/case-INV-1001/investigate')).toHaveLength(0);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(callsTo(fetchMock, 'POST /autonomy/pause')).toHaveLength(0);
   });
 
-  it('after a failed paid investigation, another run needs a fresh confirm', async () => {
+  it('polls activity and summary, and toasts new items that need the owner', async () => {
+    let polls = 0;
     const fetchMock = mockFetch({
-      ...baseRoutes,
-      [WS]: { body: workspace() },
-      'POST /cases/case-INV-1001/investigate': 'network-error',
-    });
-    signedInAt('case-INV-1001');
-    const user = userEvent.setup();
-    render(<App />);
-
-    await user.click(await screen.findByRole('button', { name: /Investigate with AI/ }));
-    await user.click(screen.getByRole('button', { name: 'Yes, run the paid investigation' }));
-    expect(await screen.findByText(/Could not reach the FinanceOps server/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Yes, run the paid investigation' })).toBeNull();
-    expect(callsTo(fetchMock, 'POST /cases/case-INV-1001/investigate')).toHaveLength(1);
-  });
-
-  it('after a network error on approve, refetches instead of inviting a blind retry', async () => {
-    const fetchMock = mockFetch({
-      ...baseRoutes,
-      [WS]: { body: workspace() },
-      'POST /actions/act-1/approve': 'network-error',
-    });
-    signedInAt('case-INV-1001');
-    const user = userEvent.setup();
-    render(<App />);
-
-    await user.click(await screen.findByRole('button', { name: 'Approve this exact message' }));
-    expect(await screen.findByText(/Could not reach the FinanceOps server/)).toBeInTheDocument();
-    await waitFor(() => expect(callsTo(fetchMock, WS).length).toBeGreaterThanOrEqual(2));
-  });
-
-  it('keeps approve disabled until the refreshed case has arrived', async () => {
-    let release: () => void = () => {};
-    const slow = new Promise<void>((resolve) => (release = resolve));
-    const fetchMock = mockFetch({
-      ...baseRoutes,
-      [WS]: [{ body: workspace() }, { body: workspace(), wait: slow }],
-      'POST /actions/act-1/approve': { body: proposedAction },
-    });
-    signedInAt('case-INV-1001');
-    const user = userEvent.setup();
-    render(<App />);
-
-    const approve = await screen.findByRole('button', { name: 'Approve this exact message' });
-    await user.click(approve);
-    await waitFor(() => expect(callsTo(fetchMock, WS).length).toBeGreaterThanOrEqual(2));
-    expect(approve).toBeDisabled();
-    await user.click(approve);
-    expect(callsTo(fetchMock, 'POST /actions/act-1/approve')).toHaveLength(1);
-    release();
-    await waitFor(() => expect(approve).toBeEnabled());
-  });
-});
-
-describe('links', () => {
-  it('a malformed #case= link does not crash the page', async () => {
-    mockFetch(baseRoutes);
-    signedInAt();
-    window.location.hash = 'case=%';
-    render(<App />);
-    expect(await screen.findByText('No case selected')).toBeInTheDocument();
-  });
-});
-
-describe('demo lab', () => {
-  it('labels the lab and the inbox as simulated', async () => {
-    mockFetch({ ...baseRoutes, 'GET /demo/inbox': { body: inbox } });
-    signedInAt();
-    const user = userEvent.setup();
-    render(<App />);
-
-    expect(await screen.findByText('Synthetic data · simulated')).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: 'Load baseline' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Show simulated inbox' }));
-    expect(await screen.findByText('Simulated inbox — no real email was sent')).toBeInTheDocument();
-  });
-
-  it('never asks the worker to run paid investigations', async () => {
-    const fetchMock = mockFetch({
-      ...baseRoutes,
-      'POST /demo/worker/run': {
-        body: {
-          simulated_time: '2026-11-16T11:00:00Z',
-          result: {
-            sent: ['act-1'], failed: [], unknown: [], cancelled: [], follow_ups_elapsed: [],
-            investigations: [], investigations_waiting: 0, errors: {},
-          },
-        },
+      ...shellRoutes(),
+      // First load: one old item. A later poll brings a new proposal.
+      'GET /activity': (_init, url) => {
+        if (url.includes('after=0')) return { body: activity([activityItem(1)]) };
+        polls += 1;
+        if (polls === 2) return { body: activity([activityItem(2, { kind: 'action_proposed', summary: 'New reminder proposed' })]) };
+        return { body: activity([], polls > 2 ? 2 : 1) };
       },
+      'GET /attention': [{ body: { ...attention(), approvals: [], escalations: [] } }, { body: attention() }],
+      'GET /summary': [{ body: summary }, { body: { ...summary, awaiting_owner: 3 } }],
     });
-    signedInAt();
-    const user = userEvent.setup();
-    render(<App />);
+    signedInAt('/');
+    render(<App pollMs={40} />);
 
-    const minutes = await screen.findByLabelText(/Advance simulated clock/);
-    await user.clear(minutes);
-    await user.type(minutes, '90');
-    await user.click(screen.getByRole('button', { name: 'Run worker once' }));
-    expect(await screen.findByText(/Sent to simulated inbox: act-1/)).toBeInTheDocument();
-    expect(callsTo(fetchMock, 'POST /demo/worker/run')[0]?.body).toEqual({
-      advance_minutes: 90,
-      run_investigations: false,
-    });
+    // The new approvals arrive after the poll; each one gets a toast with a link.
+    const toasts = await screen.findByRole('region', { name: 'Notifications' });
+    expect(await within(toasts).findByText('Maple Synthetic Ltd needs you', {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(within(toasts).getByText('Cedar Synthetic Inc needs you')).toBeInTheDocument();
+    expect(callsTo(fetchMock, 'GET /summary').length).toBeGreaterThanOrEqual(2);
+    expect(callsTo(fetchMock, 'GET /activity').some((c) => c.url.includes('after=1'))).toBe(true);
   });
 });

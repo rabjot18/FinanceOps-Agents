@@ -1,15 +1,17 @@
 import { useState } from 'react';
-import { ApiError, type Api } from '../api/client';
+import { useQueryClient } from '@tanstack/react-query';
+import { asApiError, type ApiError } from '../api/client';
+import { refreshAll } from '../api/queries';
+import { useSession } from '../session';
 
 interface Props {
   caseId: string;
-  client: Api;
-  onChanged: () => void;
-  onAuthError: (error: ApiError) => boolean;
 }
 
 /** Investigation calls a paid model, so it always needs a second, explicit click. */
-export function InvestigatePanel({ caseId, client, onChanged, onAuthError }: Props) {
+export function InvestigatePanel({ caseId }: Props) {
+  const { client, signOut } = useSession();
+  const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -20,13 +22,14 @@ export function InvestigatePanel({ caseId, client, onChanged, onAuthError }: Pro
     try {
       await client.investigate(caseId);
       setConfirming(false);
-      onChanged();
+      await refreshAll(qc);
     } catch (err) {
-      const apiError = err instanceof ApiError ? err : new ApiError('server', null, String(err));
+      const apiError = asApiError(err);
       // The server may still be running the paid call: a retry needs a new confirm.
       setConfirming(false);
-      if (!onAuthError(apiError)) setError(apiError);
-      if (apiError.kind === 'conflict') onChanged();
+      if (apiError.kind === 'unauthorized') signOut('The server rejected the owner token. Enter it again.');
+      else setError(apiError);
+      if (apiError.kind === 'conflict') await refreshAll(qc);
     } finally {
       setBusy(false);
     }

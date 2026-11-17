@@ -1,38 +1,73 @@
-import { useId, useState } from 'react';
-import type { Action, ApiError } from '../api/client';
+import type { Action } from '../api/client';
 import { formatCents, formatTime, humanize, shortHash } from '../format';
 import { PlainText, SimulatedTag } from './common';
-import type { Mutate } from './Workspace';
 
-interface Props {
-  action: Action;
-  mutate: Mutate;
-  /** True while the workspace refetches: buttons wait for the fresh state. */
-  refreshing: boolean;
+type Decision = NonNullable<Action['autonomy']>;
+
+const MODE_TEXT: Record<Decision['mode'], string> = {
+  auto: 'runs automatically',
+  approve: 'needs your approval',
+  blocked: 'blocked by policy',
+};
+
+/** What the policy decided for this action (computed by the backend). */
+export function AutonomyNote({ decision }: { decision: Decision }) {
+  return (
+    <div className={`autonomy-note mode-${decision.mode}`}>
+      <strong>
+        Policy v{decision.policy_version}
+        {decision.rule_id ? ` · rule ${decision.rule_id}` : ' · no rule matched'}: {MODE_TEXT[decision.mode]}
+      </strong>
+      {decision.reasons.length > 0 && (
+        <ul>
+          {decision.reasons.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
-/** One action: what was proposed, what was approved, queued and delivered. */
-export function ActionCard({ action, mutate, refreshing }: Props) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<ApiError | null>(null);
-  const [note, setNote] = useState('');
-  const noteId = useId();
-  const { payload, approval, delivery } = action;
-
-  const run = async (change: Parameters<Mutate>[0]) => {
-    setBusy(true);
-    setError(null);
-    const result = await mutate(change);
-    setBusy(false);
-    // A conflict shows the page-level banner instead.
-    if (!result.ok && result.error.kind !== 'conflict') setError(result.error);
-  };
-
-  const locked = busy || refreshing;
+/** The exact message the server rendered, with the hash an approval binds to. */
+export function ExactMessage({ action, compact = false }: { action: Action; compact?: boolean }) {
+  const { payload } = action;
   const hash = action.payload_hash;
-  const canDecide = action.status === 'proposed';
-  const canExecute = action.status === 'approved' && approval?.expired !== true;
+  if (!payload) return <p className="muted">No message rendered for this action.</p>;
+  return (
+    <section className={compact ? 'message compact' : 'message'} aria-label="Exact message">
+      <div className="message-bar">
+        <h5>Exact message</h5>
+        <SimulatedTag>Simulated delivery</SimulatedTag>
+      </div>
+      <dl>
+        <div>
+          <dt>To</dt>
+          <dd>{payload.to ?? '(no contact on file)'}</dd>
+        </div>
+        <div>
+          <dt>Subject</dt>
+          <dd>{payload.subject}</dd>
+        </div>
+        <div>
+          <dt>Amount</dt>
+          <dd>{formatCents(payload.amount_cents, payload.currency)}</dd>
+        </div>
+      </dl>
+      {!compact && <PlainText text={payload.body} />}
+      {hash && (
+        <p className="muted hash">
+          Payload hash <code title={hash}>{shortHash(hash)}</code> · invoice v{payload.invoice_version}
+          {payload.policy_version != null && <> · policy v{payload.policy_version}</>}
+        </p>
+      )}
+    </section>
+  );
+}
 
+/** One action: what was proposed, decided, queued and delivered. Decisions live in the action bar. */
+export function ActionCard({ action }: { action: Action }) {
+  const { approval, delivery } = action;
   return (
     <article className="action-card" aria-label={`Action ${action.id}`}>
       <header className="action-head">
@@ -42,6 +77,13 @@ export function ActionCard({ action, mutate, refreshing }: Props) {
         <span className={`badge status-${action.status}`}>{humanize(action.status)}</span>
       </header>
       <Stepper status={action.status} />
+
+      {action.superseded_by && (
+        <p className="superseded">
+          Superseded by <code>{action.superseded_by}</code>: a newer plan replaced this one (kept for the record).
+        </p>
+      )}
+      {action.autonomy && <AutonomyNote decision={action.autonomy} />}
 
       <dl className="lifecycle">
         <div>
@@ -88,75 +130,7 @@ export function ActionCard({ action, mutate, refreshing }: Props) {
         </details>
       )}
 
-      {payload ? (
-        <section className="message" aria-label="Exact message">
-          <div className="message-bar">
-            <h5>Exact message</h5>
-            <SimulatedTag>Simulated delivery</SimulatedTag>
-          </div>
-          <dl>
-            <div>
-              <dt>To</dt>
-              <dd>{payload.to ?? '(no contact on file)'}</dd>
-            </div>
-            <div>
-              <dt>Subject</dt>
-              <dd>{payload.subject}</dd>
-            </div>
-            <div>
-              <dt>Amount</dt>
-              <dd>{formatCents(payload.amount_cents, payload.currency)}</dd>
-            </div>
-          </dl>
-          <PlainText text={payload.body} />
-          {hash && (
-            <p className="muted hash">
-              Payload hash <code title={hash}>{shortHash(hash)}</code> · invoice v{payload.invoice_version}
-              {payload.policy_version != null && <> · policy v{payload.policy_version}</>}
-            </p>
-          )}
-        </section>
-      ) : (
-        <p className="muted">No message rendered for this action.</p>
-      )}
-
-      {error && (
-        <p role="alert" className="error">
-          {error.detail}
-        </p>
-      )}
-
-      {canDecide && (
-        <div className="decision">
-          <button
-            type="button"
-            disabled={locked || !hash}
-            onClick={() => hash && void run((c) => c.approve(action.id, hash))}
-          >
-            Approve this exact message
-          </button>
-          {!hash && <span className="muted">Nothing to approve: no message hash.</span>}
-          <label htmlFor={noteId}>Rejection note (optional)</label>
-          <textarea id={noteId} rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
-          <button
-            type="button"
-            className="danger"
-            disabled={locked}
-            onClick={() => void run((c) => c.reject(action.id, note.trim() || null))}
-          >
-            Reject
-          </button>
-        </div>
-      )}
-
-      {action.status === 'approved' && (
-        <div className="decision">
-          <button type="button" disabled={locked || !canExecute} onClick={() => void run((c) => c.execute(action.id))}>
-            Execute (queue for simulated delivery)
-          </button>
-          {!canExecute && <span className="muted">The approval expired; it cannot be queued.</span>}
-        </div>
-      )}
+      <ExactMessage action={action} />
     </article>
   );
 }
