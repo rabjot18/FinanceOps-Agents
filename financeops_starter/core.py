@@ -13,6 +13,7 @@ execute() only queues it in the outbox; worker.py delivers it to a simulated
 inbox; a follow-up job checks for payment later; and a case resolves only when
 recorded settlements add up to the invoice total (stored as a verification).
 """
+import hashlib
 import json
 import os
 import re
@@ -81,6 +82,22 @@ ACTIVITY_KINDS = {
     "policy_changed"}
 CASE_LIST_SORTS = {"updated", "outstanding", "overdue", "customer"}
 MAX_PLAYBACK_SPEED = 7 * 24 * 60  # simulated minutes per real second (one week)
+# The shared event format (Milestone 5). Every input — scenario, generator,
+# demo route, later Stripe/Plaid adapters — becomes one of these kinds with
+# exactly these payload fields. The orchestrator applies an event by calling
+# the matching FinanceCore method (create_invoice, set_contact, add_evidence,
+# record_settlement, set_disputed, record_reply).
+EVENT_SPECS = {
+    "invoice_created": {"invoice_id": str, "customer": str, "total_cents": int,
+                        "due_at": (str, type(None))},
+    "contact_set": {"invoice_id": str, "address": str},
+    "evidence_added": {"evidence_id": str, "invoice_id": str, "body": str},
+    "settlement_received": {"settlement_id": str, "invoice_id": str, "amount_cents": int,
+                            "currency": str},
+    "dispute_changed": {"invoice_id": str, "disputed": bool},
+    "reply_received": {"evidence_id": str, "invoice_id": str, "body": str},
+}
+EVENT_SOURCES = {"scenario", "generator", "demo", "api", "stripe", "plaid", "csv"}
 _RULE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -1364,6 +1381,56 @@ class FinanceCore:
             "currency,settlement_ids,method,verified_at) VALUES(?,?,?,?,?,?,?,?)",
             (case_id, invoice["version"], invoice["total_cents"], settled, "CAD",
              json.dumps([r["id"] for r in rows]), "settlements_sum_to_total", now))
+
+    # --- Milestone 5: events (the shared input format) ------------------
+
+    def schedule_event(self, kind, payload, source, source_ref, at=None, synthetic=True):
+        """Store one normalized input event, to be applied by the orchestrator
+        once the clock reaches `at` (default: now). `source:source_ref` is the
+        dedupe key: storing the same event again is a no-op; reusing the key
+        with a different payload is a Conflict. Returns the stored event."""
+        spec = EVENT_SPECS.get(kind)
+        if spec is None:
+            raise InvalidInput(f"kind must be one of {sorted(EVENT_SPECS)}")
+        if source not in EVENT_SOURCES:
+            raise InvalidInput(f"source must be one of {sorted(EVENT_SOURCES)}")
+        if type(source_ref) is not str or not 1 <= len(source_ref) <= 200:
+            raise InvalidInput("source_ref must be 1-200 characters")
+        if type(payload) is not dict or set(payload) != set(spec):
+            raise InvalidInput(f"{kind} payload needs exactly: {sorted(spec)}")
+        for field, expected in spec.items():
+            value = payload[field]
+            # bool is an int in Python; never accept True as an amount.
+            if not isinstance(value, expected) or (expected is int and type(value) is bool):
+                raise InvalidInput(f"{kind}.{field} has the wrong type")
+        at = self.clock() if at is None else self._timestamp(at, "at")
+        dedupe_key = f"{source}:{source_ref}"
+        body = json.dumps(payload, sort_keys=True)
+        with self.transaction():
+            prior = self.db.execute("SELECT * FROM events WHERE dedupe_key=?",
+                                    (dedupe_key,)).fetchone()
+            if prior:
+                if prior["kind"] != kind or prior["payload"] != body:
+                    raise Conflict("Event key reused with different data")
+                return self._event_out(prior)
+            event_id = "evt-" + hashlib.sha256(dedupe_key.encode()).hexdigest()[:24]
+            self.db.execute(
+                "INSERT INTO events(id, kind, source, source_ref, dedupe_key, synthetic, payload, "
+                "received_at, routed_at) VALUES(?,?,?,?,?,?,?,?,NULL)",
+                (event_id, kind, source, source_ref, dedupe_key, int(bool(synthetic)), body, at))
+            row = self.db.execute("SELECT * FROM events WHERE id=?", (event_id,)).fetchone()
+        return self._event_out(row)
+
+    @staticmethod
+    def _event_out(row):
+        return {**dict(row), "payload": json.loads(row["payload"]),
+                "synthetic": bool(row["synthetic"])}
+
+    def due_events(self, limit=500):
+        """Events not yet applied whose time has come, oldest first."""
+        return [self._event_out(r) for r in self.db.execute(
+            "SELECT * FROM events WHERE routed_at IS NULL AND received_at <= ? "
+            "ORDER BY received_at, id LIMIT ?", (self.clock(), limit))]
 
     # --- Milestone 5: activity, autonomy switch, escalations, agents -----
 

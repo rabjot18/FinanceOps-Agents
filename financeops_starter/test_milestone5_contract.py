@@ -14,7 +14,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from api import create_app
-from core import DEFAULT_AUTONOMY_RULES, DEFAULT_CADENCE_DAYS, SCHEMA_VERSION, FinanceCore
+from core import (DEFAULT_AUTONOMY_RULES, DEFAULT_CADENCE_DAYS, SCHEMA_VERSION, Conflict,
+                  FinanceCore, InvalidInput)
 
 TOKEN = "test-owner-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -213,6 +214,44 @@ class AttentionTests(Milestone5TestCase):
                           summary["resolved_7d"], summary["model_spend_today_cents"]),
                          (60_000, 1, 0, None))
         self.assertTrue(summary["simulated_time"])
+
+
+class EventFormatTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.core = FinanceCore(str(Path(self.temp.name) / "events.sqlite3"))
+
+    def tearDown(self):
+        self.core.close()
+        self.temp.cleanup()
+
+    def test_scheduled_events_are_deduplicated_and_become_due(self):
+        payload = {"invoice_id": "g-1", "customer": "Acme (synthetic)", "total_cents": 1000,
+                   "due_at": None}
+        first = self.core.schedule_event("invoice_created", payload, "generator", "42:g-1:created",
+                                         at="2000-01-01T00:00:00+00:00")
+        again = self.core.schedule_event("invoice_created", payload, "generator", "42:g-1:created",
+                                         at="2000-01-01T00:00:00+00:00")
+        self.assertEqual(first, again)
+        later = self.core.schedule_event("contact_set", {"invoice_id": "g-1", "address": "a@b.example"},
+                                         "generator", "42:g-1:contact", at="2999-01-01T00:00:00+00:00")
+        self.assertEqual([e["id"] for e in self.core.due_events()], [first["id"]])
+        self.assertIsNone(later["routed_at"])
+        self.assertTrue(first["synthetic"])
+
+    def test_bad_events_are_refused(self):
+        good = {"settlement_id": "s", "invoice_id": "i", "amount_cents": 5, "currency": "CAD"}
+        for kind, payload, source in (
+                ("payment_made", good, "demo"),  # unknown kind
+                ("settlement_received", good, "email"),  # unknown source
+                ("settlement_received", {**good, "amount_cents": True}, "demo"),  # bool as cents
+                ("settlement_received", {**good, "extra": 1}, "demo")):
+            with self.subTest(kind=kind, source=source):
+                with self.assertRaises(InvalidInput):
+                    self.core.schedule_event(kind, payload, source, "ref")
+        self.core.schedule_event("settlement_received", good, "demo", "ref")
+        with self.assertRaises(Conflict):
+            self.core.schedule_event("settlement_received", {**good, "amount_cents": 6}, "demo", "ref")
 
 
 class DemoClockTests(Milestone5TestCase):
