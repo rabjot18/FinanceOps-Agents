@@ -1507,11 +1507,18 @@ class FinanceCore:
             return decision("approve", None, f"policy v{policy_version} has no autonomy rules")
         if open_escalations:
             return decision("approve", None, "case has an open escalation")
-        if proposed_by.startswith("agent:") and kind == "collection_reminder":
+        if proposed_by.startswith("agent:"):
             # The agent only looks at cases that are not routine (a reply, a
-            # partial payment). Chasing after either is the owner's call.
-            return decision("approve", None, "agent proposed a reminder after a reply or "
-                                             "partial payment: the owner decides")
+            # partial payment, a new document), and until it can escalate
+            # (Milestone 5 step 2) even its information requests may answer a
+            # dispute the system has not flagged yet. The owner decides.
+            return decision("approve", None, "proposed by the agent on a non-routine case: "
+                                             "the owner decides")
+        if kind == "collection_reminder" and evidence_count > 1:
+            # Replies or documents beyond the original contract can change the
+            # story (already paid, promised a date, disputed): no autopilot.
+            return decision("approve", None, "the case has replies or documents beyond the "
+                                             "contract: the owner decides")
         for rule in rules:
             if rule["action_kind"] != kind:
                 continue

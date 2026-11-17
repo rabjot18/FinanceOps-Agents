@@ -135,8 +135,10 @@ independently redesign the same interfaces.
   (`agent_controls`) are checked before every automatic execution or agent run.
   `apply_autonomy` re-evaluates, checks the switch, approves and queues in one
   transaction; the worker holds automatically approved messages while paused.
-- A reminder proposed by the agent always waits for the owner (the agent only
-  sees non-routine cases); agent requests for information follow the rules.
+- Every agent proposal waits for the owner (the agent only sees non-routine
+  cases, and cannot escalate until step 2). Automatic reminders only on clean
+  cases: the contract is the only evidence. New documents or replies stop the
+  cadence until reviewed (`has_unreviewed_evidence`).
 - An escalation caused by an event is opened in the same transaction that
   marks the event applied. A case paid in full resolves and closes its open
   escalations. Events with equal timestamps apply in stored order.

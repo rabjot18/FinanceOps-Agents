@@ -253,16 +253,34 @@ class ReviewFindingTests(OrchestratorTestCase):
         self.assertEqual(self.core.action_detail("auto-g-1-d3")["autonomy"]["reasons"],
                          ["invoice disputed"])
 
-    def test_agent_reminders_go_to_the_owner_but_agent_questions_may_run(self):
+    def test_every_agent_proposal_waits_for_the_owner(self):
         self.business(due_days_ago=0)
         self.round()
         self.core.propose("agent-r", "g-1", "collection_reminder", ["g-1-c"], proposed_by="agent:run-1")
         self.core.propose("agent-q", "g-1", "request_information", ["g-1-c"], proposed_by="agent:run-1")
-        self.assertEqual(self.core.action_detail("agent-r")["autonomy"]["mode"], "approve")
-        self.assertEqual(self.core.action_detail("agent-q")["autonomy"]["mode"], "auto")
+        for action_id in ("agent-r", "agent-q"):
+            self.assertEqual(self.core.action_detail(action_id)["autonomy"]["mode"], "approve")
         self.round()
         self.assertEqual(self.core.action("agent-r")["status"], "proposed")
-        self.assertEqual(self.core.action("agent-q")["status"], "dispatched")
+        self.assertEqual(self.core.action("agent-q")["status"], "proposed")
+        self.assertEqual(self.inbox.messages(), [])
+
+    def test_reminders_on_a_case_with_extra_documents_wait_for_the_owner(self):
+        self.business(due_days_ago=0)
+        self.event("evidence_added", "g-1:promise", evidence_id="g-1-p", invoice_id="g-1",
+                   body="We will pay on Friday.")
+        self.round()
+        esc = self.core.attention()["escalations"]
+        self.assertEqual(esc, [])  # not due yet: nothing to decide
+        self.core.advance_simulated_time(4 * DAY)
+        self.round()  # unreviewed document: needs judgement, escalated
+        self.core.resolve_escalation(self.core.attention()["escalations"][0]["escalation"]["id"])
+        self.core.advance_simulated_time(4 * DAY)  # cadence day 7: reviewed, proposes
+        self.round()
+        [approval] = self.core.attention()["approvals"]
+        self.assertEqual(approval["action"]["autonomy"]["reasons"],
+                         ["the case has replies or documents beyond the contract: the owner decides"])
+        self.assertEqual(self.inbox.messages(), [])
 
     def test_events_with_the_same_timestamp_apply_in_stored_order(self):
         at = self.days_ago(4)
@@ -363,7 +381,7 @@ class IntegrationFindingTests(OrchestratorTestCase):
         self.round()
         self.assertEqual(len(self.inbox.messages()), 1)
 
-    def test_a_reviewed_document_lets_the_cadence_continue(self):
+    def test_a_reviewed_document_lets_the_cadence_propose_again(self):
         self.business(due_days_ago=0)
         self.event("evidence_added", "g-1:note", evidence_id="g-1-note", invoice_id="g-1",
                    body="Customer asked for the invoice PDF again.")
@@ -375,9 +393,12 @@ class IntegrationFindingTests(OrchestratorTestCase):
         self.assertFalse(self.core.has_unreviewed_evidence("g-1"))
         self.core.advance_simulated_time(4 * DAY)  # day 8: cadence day 7
         self.round()
-        self.assertEqual(len(self.inbox.messages()), 1)
+        self.assertEqual([a["action"]["id"] for a in self.core.attention()["approvals"]],
+                         ["auto-g-1-d7"])  # proposed again, now for the owner
 
     def test_messages_queued_after_an_investigation_go_out_in_the_same_round(self):
+        # Worker plumbing only: agent proposals wait for the owner today, so
+        # this stand-in investigator proposes as the orchestrator would.
         self.core.set_policy(60, 7, 2, daily_model_budget_cents=100, created_by="test")
         self.business(due_days_ago=0)
         self.event("reply_received", "g-1:reply", evidence_id="g-1-r1", invoice_id="g-1",
@@ -390,7 +411,7 @@ class IntegrationFindingTests(OrchestratorTestCase):
             def investigate(self, case_id):
                 run = self.core.start_agent_run(case_id, "fake")
                 action = self.core.propose("agent-q", "g-1", "request_information", ["g-1-c"],
-                                           proposed_by=f"agent:{run}")
+                                           proposed_by="orchestrator")
                 return self.core.finish_agent_run(run, "proposed", action_id=action["id"])
         result = self.round(Agent)
         self.assertEqual(result["sent"], ["agent-q"])
