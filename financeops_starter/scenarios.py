@@ -163,8 +163,11 @@ def _preflight(core, invoices):
             current = core.invoice(spec["invoice_id"])
         except NotFound:
             continue
-        if (current["customer"], current["total"]) != (spec["customer"], spec["total_cents"]):
+        if (current["customer"], current["total_cents"]) != (spec["customer"], spec["total_cents"]):
             raise Conflict("Invoice ID reused with different data")
+        contact = core._contact(spec["invoice_id"])
+        if contact is not None and contact["address"] != spec["contact"]:
+            raise Conflict("Invoice already has a different contact; it is never overwritten")
         stored = {e["id"]: e["body"] for e in core.evidence(spec["invoice_id"])}
         for evidence_id, body in spec["evidence"]:
             if evidence_id in stored and stored[evidence_id] != body:
@@ -172,14 +175,22 @@ def _preflight(core, invoices):
 
 
 def _apply(core, spec):
+    """Evidence and settlements are idempotent by ID. The contact and dispute
+    flag are only set on a new invoice, so a reload never undoes later changes."""
     invoice_id = spec["invoice_id"]
+    try:
+        core.invoice(invoice_id)
+        existed = True
+    except NotFound:
+        existed = False
     core.create_invoice(invoice_id, spec["customer"], spec["total_cents"])
-    core.set_contact(invoice_id, spec["contact"])
+    if core._contact(invoice_id) is None:
+        core.set_contact(invoice_id, spec["contact"])
     for evidence_id, body in spec["evidence"]:
         core.add_evidence(evidence_id, invoice_id, body)
     for settlement_id, amount_cents in spec["settlements"]:
         core.record_settlement(settlement_id, invoice_id, amount_cents)
-    if spec["disputed"]:
+    if spec["disputed"] and not existed:
         core.set_disputed(invoice_id, True)
 
 

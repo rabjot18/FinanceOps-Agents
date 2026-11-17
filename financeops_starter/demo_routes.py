@@ -56,7 +56,8 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
     def demo_inbox():
         return {"simulated": True, "messages": SimulatedInbox(db_path).messages()}
 
-    @demo.post("/worker/run", response_model=schemas.WorkerRunOut)
+    @demo.post("/worker/run", response_model=schemas.WorkerRunOut,
+               responses=schemas.OWNER_ERRORS)  # 401 only when re-investigating
     def demo_worker_run(body: Optional[WorkerRunIn] = None, fc: FinanceCore = Depends(core),
                         authorization: Optional[str] = Header(default=None)):
         """Run one worker round, optionally after moving the SIMULATED clock forward.

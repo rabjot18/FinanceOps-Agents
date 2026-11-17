@@ -81,7 +81,8 @@ export function workspace(overrides: Partial<Workspace> = {}): Workspace {
     invoice: {
       id: 'INV-1001',
       customer: 'Maple Synthetic Ltd',
-      total: 125000,
+      total_cents: 125000,
+      currency: 'CAD',
       settled_cents: 0,
       outstanding_cents: 125000,
       disputed: false,
@@ -130,7 +131,8 @@ export const inbox: Inbox = {
   ],
 };
 
-type Reply = { status?: number; body?: unknown } | 'network-error';
+/** `wait` holds the answer back until the promise resolves (for slow-server tests). */
+type Reply = { status?: number; body?: unknown; wait?: Promise<void> } | 'network-error';
 type Handler = (init: RequestInit) => Reply;
 
 /**
@@ -154,6 +156,7 @@ export function mockFetch(routes: Record<string, Reply | Handler | Reply[]>) {
       reply = route[Math.min(n, route.length - 1)] as Reply;
     } else reply = route;
     if (reply === 'network-error') throw new TypeError('Failed to fetch');
+    if (reply.wait) await reply.wait;
     return new Response(reply.body === undefined ? '' : JSON.stringify(reply.body), {
       status: reply.status ?? 200,
       headers: { 'Content-Type': 'application/json' },

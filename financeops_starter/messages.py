@@ -42,7 +42,7 @@ def render(kind, invoice, evidence_ids, contact, policy):
         body = (
             "Hello,\n\n"
             f"Our records show {cad(invoice['settled_cents'])} received against invoice "
-            f"{invoice_id} for {cad(invoice['total'])}, leaving {cad(outstanding)} outstanding.\n"
+            f"{invoice_id} for {cad(invoice['total_cents'])}, leaving {cad(outstanding)} outstanding.\n"
             f"Our references: {', '.join(refs)}.\n\n"
             "Please arrange payment of the balance, or reply if you believe this is incorrect.\n\n"
             "(Simulated message from the FinanceOps demo. No real email was sent.)"

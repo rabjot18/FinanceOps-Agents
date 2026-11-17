@@ -7,10 +7,12 @@ import type { Mutate } from './Workspace';
 interface Props {
   action: Action;
   mutate: Mutate;
+  /** True while the workspace refetches: buttons wait for the fresh state. */
+  refreshing: boolean;
 }
 
 /** One action: what was proposed, what was approved, queued and delivered. */
-export function ActionCard({ action, mutate }: Props) {
+export function ActionCard({ action, mutate, refreshing }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [note, setNote] = useState('');
@@ -26,6 +28,7 @@ export function ActionCard({ action, mutate }: Props) {
     if (!result.ok && result.error.kind !== 'conflict') setError(result.error);
   };
 
+  const locked = busy || refreshing;
   const hash = action.payload_hash;
   const canDecide = action.status === 'proposed';
   const canExecute = action.status === 'approved' && approval?.expired !== true;
@@ -125,7 +128,7 @@ export function ActionCard({ action, mutate }: Props) {
         <div className="decision">
           <button
             type="button"
-            disabled={busy || !hash}
+            disabled={locked || !hash}
             onClick={() => hash && void run((c) => c.approve(action.id, hash))}
           >
             Approve this exact message
@@ -136,7 +139,7 @@ export function ActionCard({ action, mutate }: Props) {
           <button
             type="button"
             className="danger"
-            disabled={busy}
+            disabled={locked}
             onClick={() => void run((c) => c.reject(action.id, note.trim() || null))}
           >
             Reject
@@ -146,7 +149,7 @@ export function ActionCard({ action, mutate }: Props) {
 
       {action.status === 'approved' && (
         <div className="decision">
-          <button type="button" disabled={busy || !canExecute} onClick={() => void run((c) => c.execute(action.id))}>
+          <button type="button" disabled={locked || !canExecute} onClick={() => void run((c) => c.execute(action.id))}>
             Execute (queue for simulated delivery)
           </button>
           {!canExecute && <span className="muted">The approval expired; it cannot be queued.</span>}

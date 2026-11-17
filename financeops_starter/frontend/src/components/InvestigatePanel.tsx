@@ -23,6 +23,8 @@ export function InvestigatePanel({ caseId, client, onChanged, onAuthError }: Pro
       onChanged();
     } catch (err) {
       const apiError = err instanceof ApiError ? err : new ApiError('server', null, String(err));
+      // The server may still be running the paid call: a retry needs a new confirm.
+      setConfirming(false);
       if (!onAuthError(apiError)) setError(apiError);
       if (apiError.kind === 'conflict') onChanged();
     } finally {

@@ -28,7 +28,12 @@ function storeToken(token: string | null) {
 // always /app/ and the server never needs client-side routes.
 function caseFromHash(): string | null {
   const match = /^#case=(.+)$/.exec(window.location.hash);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null; // a malformed link (e.g. "#case=%") just selects nothing
+  }
 }
 
 export function App() {

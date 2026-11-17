@@ -72,15 +72,34 @@ class CaseListTests(WorkspaceTestCase):
         self.assertEqual(case["pending_actions"], 1)
 
 
+class HostCheckTests(WorkspaceTestCase):
+    def test_other_host_names_are_refused(self):
+        """DNS rebinding: a web page that points its own name at 127.0.0.1
+        must not reach the API, including the token-free demo routes."""
+        for host in ("evil.example", "127.0.0.1.evil.example"):
+            with self.subTest(host=host):
+                response = self.client.get("/demo/inbox", headers={"Host": host})
+                self.assertEqual(response.status_code, 400)
+
+    def test_local_names_are_allowed(self):
+        for host in ("127.0.0.1:8000", "localhost:8000"):
+            with self.subTest(host=host):
+                self.assertEqual(self.client.get("/demo/scenarios", headers={"Host": host}).status_code, 200)
+
+
 class WorkspaceTests(WorkspaceTestCase):
     def test_needs_the_owner_token_and_a_real_case(self):
         self.call("GET", f"/cases/{CASE}/workspace", expect=401)
-        self.call("GET", "/cases/case-missing/workspace", headers=AUTH, expect=404)
+        missing = self.call("GET", "/cases/case-missing/workspace", headers=AUTH, expect=404)
+        self.assertIsInstance(missing["detail"], str)  # the declared ErrorOut shape
 
     def test_one_snapshot_of_everything_the_owner_reviews(self):
         ws = self.workspace()
         self.assertEqual(ws["case"]["id"], CASE)
         self.assertEqual(ws["invoice"]["outstanding_cents"], 200_000)
+        self.assertEqual(ws["invoice"]["total_cents"], 1_200_000)
+        self.assertEqual(ws["invoice"]["currency"], "CAD")
+        self.assertNotIn("total", ws["invoice"])
         self.assertEqual([e["id"] for e in ws["evidence"]], ["contract-1"])
         self.assertEqual(ws["policy"]["version"], 1)
         self.assertTrue(ws["contact_on_file"])

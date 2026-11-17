@@ -21,10 +21,14 @@ python3 seed.py                          # seed policy v1, contacts, two demo ca
 .venv/bin/python eval_agent.py           # describe the live model check (no API calls)
 .venv/bin/python eval_agent.py --run     # live check: real Claude, COSTS MONEY
 FINANCEOPS_ENABLE_DEMO=1 FINANCEOPS_OWNER_TOKEN=<secret> .venv/bin/uvicorn api:create_app --factory
+.venv/bin/python export_contract.py --check   # API still matches contracts/openapi.json
+cd frontend && npm ci && npm test && npm run e2e   # owner console: unit + browser tests
 ```
 
-Then open http://127.0.0.1:8000/docs. Proposals, approve/reject/execute, policy,
-action details and investigations need `Authorization: Bearer <secret>`;
+Then open http://127.0.0.1:8000/docs, or the owner console at
+http://127.0.0.1:8000/app/ (after `npm run build` in `frontend/`). Proposals,
+approve/reject/execute, policy, action details and investigations need
+`Authorization: Bearer <secret>`;
 without the env var, they are disabled.
 `/demo/*` routes are off unless `FINANCEOPS_ENABLE_DEMO=1`; they need no token,
 so only enable them on 127.0.0.1.
@@ -101,6 +105,9 @@ independently redesign the same interfaces.
   every response shape. Only the lead changes either, then runs
   `.venv/bin/python export_contract.py` and regenerates frontend types in the
   same change. `test_contract.py` fails on any drift.
+- Every route declares its errors as `schemas.ErrorOut` (`COMMON_ERRORS` on
+  the app, `OWNER_ERRORS` 401 on owner routes). Invoices carry `total_cents`
+  and `currency`; money fields always end in `_cents`.
 - The frontend (`frontend/`, React + TypeScript + Vite) shows what the backend
   computes: state, amounts, approval checks. It never re-derives them.
 - Evidence and customer text are untrusted: render as plain text only, never
@@ -108,9 +115,11 @@ independently redesign the same interfaces.
 - Approving sends the exact `payload_hash` the owner was shown. A 409 means
   the case changed: refetch and say so; never retry blindly.
 - The owner token is held in memory/sessionStorage for a local demo only.
-- Worktree ownership while parallel: frontend worker owns `frontend/`;
-  scenarios worker owns `scenarios.py`, `demo_routes.py`, `test_scenarios.py`;
-  the lead owns everything else.
+- Parallel work (used for Milestone 4): one worktree per worker, each owning
+  named files only (frontend: `frontend/`; scenarios: `scenarios.py`,
+  `test_scenarios.py`); the lead owns the contract and merges one at a time.
+- Browser tests (`npm run e2e`) start their own server and database; they
+  never click "Investigate with AI" or enable re-investigations.
 
 ## Current limits
 The worker is a single process (run one per database). The only delivery

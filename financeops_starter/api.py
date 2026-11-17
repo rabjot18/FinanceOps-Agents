@@ -1,8 +1,9 @@
-"""FinanceOps HTTP API (Milestone 1). Business rules live in core.py, not here.
+"""FinanceOps HTTP API (Milestones 1-4). Business rules live in core.py, not here.
+Response and error shapes are frozen in schemas.py / contracts/openapi.json.
 
 Run:  FINANCEOPS_ENABLE_DEMO=1 FINANCEOPS_OWNER_TOKEN=<secret> \\
         .venv/bin/uvicorn api:create_app --factory
-Docs: http://127.0.0.1:8000/docs
+Docs: http://127.0.0.1:8000/docs    Owner console: http://127.0.0.1:8000/app/
 
 Environment:
   FINANCEOPS_DB           SQLite file (default financeops.sqlite3)
@@ -117,7 +118,15 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
     FinanceCore(db_path).close()  # apply schema migrations once at startup
 
     app = FastAPI(title="FinanceOps", version="0.4.0",
-                  description="Receivables backend. Synthetic data; simulated actions only.")
+                  description="Receivables backend. Synthetic data; simulated actions only.",
+                  responses=schemas.COMMON_ERRORS)
+
+    # Only answer to local names. Blocks DNS rebinding: a web page that points
+    # its own host name at 127.0.0.1 gets a 400 instead of the token-free demo
+    # routes. "testserver" is the name FastAPI's TestClient uses.
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    app.add_middleware(TrustedHostMiddleware,
+                       allowed_hosts=["127.0.0.1", "localhost", "testserver"])
 
     # Turn domain errors into HTTP status codes in one place.
     @app.exception_handler(NotFound)
@@ -175,19 +184,19 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
 
     # --- owner-only ------------------------------------------------------
 
-    @app.get("/cases", response_model=schemas.CaseListOut)
+    @app.get("/cases", response_model=schemas.CaseListOut, responses=schemas.OWNER_ERRORS)
     def list_cases(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         """Owner-only: lists customer names and amounts."""
         return {"cases": fc.cases()}
 
-    @app.get("/cases/{case_id}/workspace", response_model=schemas.WorkspaceOut)
+    @app.get("/cases/{case_id}/workspace", response_model=schemas.WorkspaceOut, responses=schemas.OWNER_ERRORS)
     def get_workspace(case_id: str, _: str = Depends(require_owner),
                       fc: FinanceCore = Depends(core)):
         """Everything the owner reviews for one case, as one snapshot. Owner-only:
         it holds customer text and the contact address. Evidence is untrusted."""
         return fc.workspace(case_id)
 
-    @app.post("/cases/{case_id}/actions", response_model=schemas.ActionOut)
+    @app.post("/cases/{case_id}/actions", response_model=schemas.ActionOut, responses=schemas.OWNER_ERRORS)
     def propose_action(case_id: str, body: ProposalIn, proposer: str = Depends(require_owner),
                        fc: FinanceCore = Depends(core)):
         """Manual proposal by the owner. The agent proposes via /investigate."""
@@ -196,39 +205,39 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
                             proposed_by=proposer, rationale=body.rationale)
         return _action_out(fc, action["id"])
 
-    @app.get("/actions/{action_id}", response_model=schemas.ActionOut)
+    @app.get("/actions/{action_id}", response_model=schemas.ActionOut, responses=schemas.OWNER_ERRORS)
     def get_action(action_id: str, _: str = Depends(require_owner),
                    fc: FinanceCore = Depends(core)):
         """The approval view: exact message, recipient, hash, approval, delivery."""
         return _action_out(fc, action_id)
 
-    @app.post("/actions/{action_id}/approve", response_model=schemas.ActionOut)
+    @app.post("/actions/{action_id}/approve", response_model=schemas.ActionOut, responses=schemas.OWNER_ERRORS)
     def approve_action(action_id: str, body: ApproveIn,
                        approver: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         fc.approve(action_id, approver=approver, payload_hash=body.payload_hash)
         return _action_out(fc, action_id)
 
-    @app.post("/actions/{action_id}/reject", response_model=schemas.ActionOut)
+    @app.post("/actions/{action_id}/reject", response_model=schemas.ActionOut, responses=schemas.OWNER_ERRORS)
     def reject_action(action_id: str, body: Optional[RejectIn] = None,
                       rejecter: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         fc.reject(action_id, rejecter=rejecter, note=body.note if body else None)
         return _action_out(fc, action_id)
 
-    @app.post("/actions/{action_id}/execute", response_model=schemas.ActionOut)
+    @app.post("/actions/{action_id}/execute", response_model=schemas.ActionOut, responses=schemas.OWNER_ERRORS)
     def execute_action(action_id: str, executor: str = Depends(require_owner),
                        fc: FinanceCore = Depends(core)):
         """Queues the approved message in the outbox; the worker delivers it."""
         fc.execute(action_id, executor=executor)
         return _action_out(fc, action_id)
 
-    @app.get("/policy", response_model=schemas.PolicyOut)
+    @app.get("/policy", response_model=schemas.PolicyOut, responses=schemas.OWNER_ERRORS)
     def get_policy(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         policy = fc.policy()
         if policy is None:
             raise HTTPException(404, "No policy stored; sending is disabled")
         return policy
 
-    @app.post("/policy", response_model=schemas.PolicyOut)
+    @app.post("/policy", response_model=schemas.PolicyOut, responses=schemas.OWNER_ERRORS)
     def set_policy(body: PolicyIn, owner: str = Depends(require_owner),
                    fc: FinanceCore = Depends(core)):
         return fc.set_policy(body.approval_ttl_minutes, body.follow_up_days,
@@ -249,7 +258,7 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
                 raise HTTPException(503, "Model client is not configured")
         return model_client["client"]
 
-    @app.post("/cases/{case_id}/investigate", response_model=schemas.AgentRunOut)
+    @app.post("/cases/{case_id}/investigate", response_model=schemas.AgentRunOut, responses=schemas.OWNER_ERRORS)
     def investigate_case(case_id: str, _: str = Depends(require_owner),
                          fc: FinanceCore = Depends(core)):
         """Owner-only because each run calls a paid model. The result is a
@@ -258,7 +267,7 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
         fc.case(case_id)  # 404 before any model call
         return Investigator(fc, get_model_client()).investigate(case_id)
 
-    @app.get("/agent-runs/{run_id}", response_model=schemas.AgentRunOut)
+    @app.get("/agent-runs/{run_id}", response_model=schemas.AgentRunOut, responses=schemas.OWNER_ERRORS)
     def get_agent_run(run_id: str, _: str = Depends(require_owner),
                       fc: FinanceCore = Depends(core)):
         """Owner-only: the trace includes full evidence text the agent read."""

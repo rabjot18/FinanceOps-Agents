@@ -93,7 +93,7 @@ class LoadTests(ScenarioTestCase):
         for case_id, (state, total, outstanding) in EXPECTED[name].items():
             ws = self.workspace(case_id)
             self.assertEqual(ws["case"]["state"], state, case_id)
-            self.assertEqual(ws["invoice"]["total"], total, case_id)
+            self.assertEqual(ws["invoice"]["total_cents"], total, case_id)
             self.assertEqual(ws["invoice"]["outstanding_cents"], outstanding, case_id)
             self.assertTrue(ws["contact_on_file"], case_id)
             self.assertTrue(ws["sending_enabled"], case_id)
@@ -164,7 +164,23 @@ class LoadTests(ScenarioTestCase):
                                              "total_cents": 100})
         self.load("baseline", expect=409)
         self.call("GET", "/cases/case-inv-1", headers=AUTH, expect=404)
-        self.assertEqual(self.workspace("case-inv-2")["invoice"]["total"], 100)
+        self.assertEqual(self.workspace("case-inv-2")["invoice"]["total_cents"], 100)
+
+    def test_reload_does_not_undo_later_changes(self):
+        self.load("baseline")
+        self.call("POST", "/demo/disputes", {"invoice_id": "inv-2", "disputed": False})
+        self.load("baseline")
+        self.assertFalse(self.workspace("case-inv-2")["invoice"]["disputed"])
+
+    def test_existing_contact_is_never_overwritten(self):
+        self.call("POST", "/demo/invoices", {"invoice_id": "inv-1", "customer": "Demo customer",
+                                             "total_cents": 1_200_000})
+        self.call("POST", "/demo/contacts", {"invoice_id": "inv-1", "address": "real@customer.example"})
+        self.load("baseline", expect=409)
+        action = self.call("POST", "/cases/case-inv-1/actions",
+                           {"action_id": "a-1", "kind": "collection_reminder", "evidence_ids": []},
+                           headers=AUTH, expect=422)  # no evidence was added either
+        self.assertTrue(action["detail"])
 
     def test_changed_evidence_is_refused_before_anything_is_written(self):
         self.call("POST", "/demo/invoices", {"invoice_id": "inv-2",
@@ -212,7 +228,7 @@ class MaliciousDocumentTests(ScenarioTestCase):
         control = self.workspace("case-control-1")
         for key in ("state",):
             self.assertEqual(attacked["case"][key], control["case"][key])
-        for key in ("total", "settled_cents", "outstanding_cents", "disputed", "state"):
+        for key in ("total_cents", "settled_cents", "outstanding_cents", "disputed", "state"):
             self.assertEqual(attacked["invoice"][key], control["invoice"][key], key)
         self.assertEqual(attacked["actions"], control["actions"])
         self.assertEqual(attacked["sending_enabled"], control["sending_enabled"])

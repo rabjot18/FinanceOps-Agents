@@ -166,6 +166,70 @@ describe('case workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(callsTo(fetchMock, 'POST /cases/case-INV-1001/investigate')).toHaveLength(0);
   });
+
+  it('after a failed paid investigation, another run needs a fresh confirm', async () => {
+    const fetchMock = mockFetch({
+      ...baseRoutes,
+      [WS]: { body: workspace() },
+      'POST /cases/case-INV-1001/investigate': 'network-error',
+    });
+    signedInAt('case-INV-1001');
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: /Investigate with AI/ }));
+    await user.click(screen.getByRole('button', { name: 'Yes, run the paid investigation' }));
+    expect(await screen.findByText(/Could not reach the FinanceOps server/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes, run the paid investigation' })).toBeNull();
+    expect(callsTo(fetchMock, 'POST /cases/case-INV-1001/investigate')).toHaveLength(1);
+  });
+
+  it('after a network error on approve, refetches instead of inviting a blind retry', async () => {
+    const fetchMock = mockFetch({
+      ...baseRoutes,
+      [WS]: { body: workspace() },
+      'POST /actions/act-1/approve': 'network-error',
+    });
+    signedInAt('case-INV-1001');
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Approve this exact message' }));
+    expect(await screen.findByText(/Could not reach the FinanceOps server/)).toBeInTheDocument();
+    await waitFor(() => expect(callsTo(fetchMock, WS).length).toBeGreaterThanOrEqual(2));
+  });
+
+  it('keeps approve disabled until the refreshed case has arrived', async () => {
+    let release: () => void = () => {};
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const fetchMock = mockFetch({
+      ...baseRoutes,
+      [WS]: [{ body: workspace() }, { body: workspace(), wait: slow }],
+      'POST /actions/act-1/approve': { body: proposedAction },
+    });
+    signedInAt('case-INV-1001');
+    const user = userEvent.setup();
+    render(<App />);
+
+    const approve = await screen.findByRole('button', { name: 'Approve this exact message' });
+    await user.click(approve);
+    await waitFor(() => expect(callsTo(fetchMock, WS).length).toBeGreaterThanOrEqual(2));
+    expect(approve).toBeDisabled();
+    await user.click(approve);
+    expect(callsTo(fetchMock, 'POST /actions/act-1/approve')).toHaveLength(1);
+    release();
+    await waitFor(() => expect(approve).toBeEnabled());
+  });
+});
+
+describe('links', () => {
+  it('a malformed #case= link does not crash the page', async () => {
+    mockFetch(baseRoutes);
+    signedInAt();
+    window.location.hash = 'case=%';
+    render(<App />);
+    expect(await screen.findByText('No case selected')).toBeInTheDocument();
+  });
 });
 
 describe('demo lab', () => {

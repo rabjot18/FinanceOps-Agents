@@ -8,6 +8,7 @@ export interface OpenCase {
   caseId: string;
   invoiceId: string;
   outstandingCents: number;
+  currency: string;
   disputed: boolean;
 }
 
@@ -88,9 +89,9 @@ export function DemoLab({ client, openCase, onChanged, onLoaded, onAuthError }: 
           invoice_id: openCase.invoiceId,
           settlement_id: newId('stl'),
           amount_cents: cents,
-          currency: 'CAD',
+          currency: 'CAD', // the contract accepts CAD settlements only
         }),
-      (inv) => `Synthetic settlement recorded. Outstanding is now ${formatCents(inv.outstanding_cents, 'CAD')}.`,
+      (inv) => `Synthetic settlement recorded. Outstanding is now ${formatCents(inv.outstanding_cents, inv.currency)}.`,
     ).then((r) => r && setAmount(''));
   };
 
@@ -170,7 +171,7 @@ export function DemoLab({ client, openCase, onChanged, onLoaded, onAuthError }: 
         <>
           <Block title={`Synthetic events for ${openCase.invoiceId}`}>
             <form onSubmit={settle} className="inline-form">
-              <label htmlFor="settle-amount">Settlement amount (cents, CAD)</label>
+              <label htmlFor="settle-amount">Settlement amount (cents, {openCase.currency})</label>
               <input
                 id="settle-amount"
                 inputMode="numeric"
@@ -179,14 +180,14 @@ export function DemoLab({ client, openCase, onChanged, onLoaded, onAuthError }: 
                 aria-describedby="settle-hint"
               />
               <span id="settle-hint" className="muted">
-                {amount && Number.isInteger(Number(amount)) ? `= ${formatCents(Number(amount), 'CAD')}` : ''}
+                {amount && Number.isInteger(Number(amount)) ? `= ${formatCents(Number(amount), openCase.currency)}` : ''}
               </span>
               <button
                 type="button"
                 className="secondary"
                 onClick={() => setAmount(String(openCase.outstandingCents))}
               >
-                Use outstanding ({formatCents(openCase.outstandingCents, 'CAD')})
+                Use outstanding ({formatCents(openCase.outstandingCents, openCase.currency)})
               </button>
               <button type="submit" disabled={busy}>
                 Add synthetic settlement

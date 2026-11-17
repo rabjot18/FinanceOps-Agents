@@ -223,17 +223,44 @@ failure, and stale data. Do not duplicate business logic in the frontend.”
 
 Acceptance: a user can inspect and approve a real backend case from the UI.
 
-**Status: in progress.** Step A (lead, contract) is done: owner-only
-`GET /cases` and `GET /cases/{id}/workspace`; typed response models for every
-route (`schemas.py`, `extra="forbid"`, so data and contract cannot drift
-silently); the contract frozen in `contracts/openapi.json` with a drift test
-(`test_contract.py`, `export_contract.py --check`); demo routes moved to
-`demo_routes.py` with `GET /demo/scenarios` and `POST /demo/scenarios/{name}`
-(additive, repeatable, nothing deleted); the built UI served at `/app`.
-159 tests pass. Next, in parallel worktrees: B (frontend, owns only
-`frontend/`) and C (scenarios, owns only `scenarios.py`, `demo_routes.py`,
-`test_scenarios.py`). Then the lead merges one at a time, adds one
-Playwright end-to-end test, reviews, and marks this phase done.
+**Status: done.** Acceptance met: in a real browser, the owner loads a
+synthetic case, proposes a reminder, approves the exact message (its payload
+hash), queues it, and the worker delivers it to the simulated inbox
+(`frontend/e2e/owner-flow.spec.ts`, Playwright, own server and database).
+
+- A (lead, contract): owner-only `GET /cases` and `GET /cases/{id}/workspace`;
+  typed responses for every route (`schemas.py`, `extra="forbid"`); the
+  contract frozen in `contracts/openapi.json` with a drift test; the built UI
+  served at `/app`.
+- B (frontend worktree, `frontend/`): React + TypeScript + Vite owner console
+  with case list, workspace, evidence (plain text, labelled untrusted),
+  actions with exact message, approval and delivery, a paid-call confirm for
+  investigations, and a demo lab. Types generated from the contract.
+- C (scenarios worktree): six synthetic scenarios (`happy_path`,
+  `partial_payment`, `dispute`, `missing_evidence`, `malicious_document`,
+  `already_resolved`), additive and repeatable.
+- D (lead, after merging B and C one at a time): invoices carry `total_cents`
+  and `currency`; every route declares `ErrorOut` (404/409/422/503, plus 401
+  on owner routes); the API only answers to local host names (blocks DNS
+  rebinding); scenario reloads never overwrite a contact or dispute flag;
+  review fixes in the UI (buttons wait for the refreshed case, network errors
+  refetch, a failed paid investigation needs a new confirm, bad links no
+  longer crash). Reviews: React, security, FastAPI (no critical findings).
+
+Tests: 179 backend (`.venv/bin/python -m unittest`), 17 frontend (Vitest),
+2 browser (Playwright), contract check unchanged. No paid model call was made.
+
+Follow-ups (not blocking, local-demo threat model):
+- `/demo/*` responses and `/demo/inbox` return evidence and contact text
+  without the owner token; trim them or put the inbox behind the token.
+- `GET /invoices/{id}` and `GET /cases/{id}` are token-free and include the
+  customer name; decide whether they become owner-only.
+- Add a Content-Security-Policy for `/app`; consider keeping the token in
+  memory only.
+- UI: an investigation in flight is forgotten when switching cases; repeated
+  identical 409s do not re-announce; demo lab 409s show only the raw detail.
+- Declare `Retry-After` (503) and `WWW-Authenticate` (401) headers in the
+  contract; scenario preflight could also check settlement IDs.
 
 ## Phase 5 — connected vendor payments and cash
 

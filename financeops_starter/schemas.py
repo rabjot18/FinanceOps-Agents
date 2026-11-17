@@ -8,7 +8,7 @@ so the contract cannot silently drift from the data.
 Change these only as the contract owner (the lead), then re-export:
     .venv/bin/python export_contract.py
 """
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict
 
@@ -23,6 +23,36 @@ RunStatus = Literal["running", "proposed", "no_proposal", "escalated", "failed"]
 
 class _Out(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# --- errors (every 4xx/5xx the API declares) -----------------------------
+
+class ValidationIssue(BaseModel):
+    """One problem FastAPI found in the request body or path (extra keys allowed)."""
+    model_config = ConfigDict(extra="allow")
+    loc: List[Union[str, int]]
+    msg: str
+    type: str
+
+
+class ErrorOut(_Out):
+    """401/404/409/503 and domain 422s carry a sentence; request-shape 422s
+    carry FastAPI's list of issues. Show either as text, never as HTML."""
+    detail: Union[str, List[ValidationIssue]]
+
+
+def _error(description):
+    return {"model": ErrorOut, "description": description}
+
+
+# Every route can answer these; the frontend maps each to one behaviour.
+COMMON_ERRORS = {
+    404: _error("Not found"),
+    409: _error("Conflict: the case changed or the ID is used; refetch, never retry blindly"),
+    422: _error("Invalid input"),
+    503: _error("Unavailable: database busy, owner token or model client not configured"),
+}
+OWNER_ERRORS = {401: _error("Owner authentication required")}
 
 
 # --- cases and invoices -------------------------------------------------
@@ -81,7 +111,8 @@ class CaseListOut(_Out):
 class InvoiceOut(_Out):
     id: str
     customer: str
-    total: int  # cents
+    total_cents: int
+    currency: str
     version: int
     disputed: bool
     settled_cents: int

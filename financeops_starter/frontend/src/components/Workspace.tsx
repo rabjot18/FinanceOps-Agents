@@ -24,6 +24,7 @@ interface Props {
 
 export function Workspace({ caseId, client, revision, onChanged, onAuthError, onSnapshot }: Props) {
   const ws = useResource(() => client.workspace(caseId), `${caseId}:${revision}`);
+  const { reload } = ws;
   const [conflict, setConflict] = useState<string | null>(null);
   const bannerRef = useRef<HTMLDivElement>(null);
 
@@ -38,6 +39,7 @@ export function Workspace({ caseId, client, revision, onChanged, onAuthError, on
       caseId: c.id,
       invoiceId: invoice.id,
       outstandingCents: invoice.outstanding_cents,
+      currency: invoice.currency,
       disputed: invoice.disputed,
     });
   }, [ws.data, onSnapshot]);
@@ -52,6 +54,7 @@ export function Workspace({ caseId, client, revision, onChanged, onAuthError, on
         await change(client);
         setConflict(null);
         onChanged(); // refetches this workspace and the case list
+        await reload(); // callers stay busy until the fresh state has arrived
         return { ok: true };
       } catch (err) {
         const error = err instanceof ApiError ? err : new ApiError('server', null, String(err));
@@ -59,12 +62,15 @@ export function Workspace({ caseId, client, revision, onChanged, onAuthError, on
         if (error.kind === 'conflict') {
           // Never retry: the owner must look at the fresh data first.
           setConflict(error.detail);
+        }
+        if (error.kind === 'conflict' || error.kind === 'network' || error.kind === 'server') {
+          // The change may or may not have happened: show the server's state.
           onChanged();
         }
         return { ok: false, error };
       }
     },
-    [client, onChanged, onAuthError],
+    [client, onChanged, onAuthError, reload],
   );
 
   if (!ws.data) {
@@ -115,7 +121,7 @@ function WorkspaceView(props: ViewProps) {
   const verification = theCase.verification;
 
   return (
-    <section className="workspace" aria-labelledby="ws-title" aria-busy={loading}>
+    <section className="workspace" aria-labelledby="ws-title">
       {conflict && (
         <div ref={props.bannerRef} tabIndex={-1} role="alert" className="banner-conflict">
           <strong>This case changed — review again.</strong> The data below has been refreshed.
@@ -142,15 +148,15 @@ function WorkspaceView(props: ViewProps) {
         <dl className="facts">
           <div>
             <dt>Total</dt>
-            <dd>{formatCents(invoice.total)}</dd>
+            <dd>{formatCents(invoice.total_cents, invoice.currency)}</dd>
           </div>
           <div>
             <dt>Settled</dt>
-            <dd>{formatCents(invoice.settled_cents)}</dd>
+            <dd>{formatCents(invoice.settled_cents, invoice.currency)}</dd>
           </div>
           <div>
             <dt>Outstanding</dt>
-            <dd>{formatCents(invoice.outstanding_cents)}</dd>
+            <dd>{formatCents(invoice.outstanding_cents, invoice.currency)}</dd>
           </div>
           <div>
             <dt>Invoice state</dt>
@@ -215,9 +221,9 @@ function WorkspaceView(props: ViewProps) {
         <p className="muted">Newest first. Delivery goes to a simulated inbox only.</p>
         {data.actions.length === 0 && <p>No actions yet.</p>}
         {data.actions.map((action) => (
-          <ActionCard key={action.id} action={action} mutate={mutate} />
+          <ActionCard key={action.id} action={action} mutate={mutate} refreshing={loading} />
         ))}
-        <ProposeForm caseId={theCase.id} evidence={data.evidence} mutate={mutate} />
+        <ProposeForm caseId={theCase.id} evidence={data.evidence} mutate={mutate} refreshing={loading} />
       </div>
 
       <div className="panel">

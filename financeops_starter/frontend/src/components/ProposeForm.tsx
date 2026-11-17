@@ -6,10 +6,11 @@ interface Props {
   caseId: string;
   evidence: Workspace['evidence'];
   mutate: Mutate;
+  refreshing: boolean;
 }
 
 /** A manual owner proposal. The server renders the message from stored facts. */
-export function ProposeForm({ caseId, evidence, mutate }: Props) {
+export function ProposeForm({ caseId, evidence, mutate, refreshing }: Props) {
   const [kind, setKind] = useState<ProposalIn['kind']>('collection_reminder');
   const [picked, setPicked] = useState<string[]>([]);
   const [rationale, setRationale] = useState('');
@@ -69,7 +70,7 @@ export function ProposeForm({ caseId, evidence, mutate }: Props) {
             {error.detail}
           </p>
         )}
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy || refreshing}>
           Propose
         </button>
       </form>

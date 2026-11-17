@@ -341,7 +341,10 @@ class FinanceCore:
             (invoice_id,),
         ).fetchone()[0]
         result = dict(row)
-        result.update(settled_cents=settled, outstanding_cents=row["total"] - settled)
+        # Money leaves core as explicit cents with its currency (CAD only for now).
+        result["total_cents"] = result.pop("total")
+        result.update(settled_cents=settled, outstanding_cents=row["total"] - settled,
+                      currency="CAD")
         result["state"] = (
             "needs_information" if row["disputed"] else
             "resolved" if settled == row["total"] else "open"
@@ -1098,12 +1101,12 @@ class FinanceCore:
                                "ORDER BY id", (invoice_id,)).fetchall()
         settled = sum(r["amount"] for r in rows)
         currencies = {r["currency"] for r in rows}
-        if settled != invoice["total"] or currencies != {"CAD"}:
+        if settled != invoice["total_cents"] or currencies != {"CAD"}:
             raise Conflict("Closure check failed: settlements do not equal the invoice total in CAD")
         self.db.execute(
             "INSERT OR IGNORE INTO case_verifications(case_id,invoice_version,total_cents,settled_cents,"
             "currency,settlement_ids,method,verified_at) VALUES(?,?,?,?,?,?,?,?)",
-            (case_id, invoice["version"], invoice["total"], settled, "CAD",
+            (case_id, invoice["version"], invoice["total_cents"], settled, "CAD",
              json.dumps([r["id"] for r in rows]), "settlements_sum_to_total", now))
 
     def _derive_state(self, invoice_id):

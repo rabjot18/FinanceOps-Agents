@@ -269,7 +269,7 @@ class Investigator:
             # Customer name omitted: not needed to decide, and it is outside text.
             return {
                 "currency": "CAD",
-                "total_cents": invoice["total"], "settled_cents": invoice["settled_cents"],
+                "total_cents": invoice["total_cents"], "settled_cents": invoice["settled_cents"],
                 "outstanding_cents": invoice["outstanding_cents"],
                 "disputed": bool(invoice["disputed"]), "version": invoice["version"],
             }
