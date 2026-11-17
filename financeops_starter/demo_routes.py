@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header
 
+import generator
 import scenarios
 import schemas
 from adapters import SimulatedInbox
@@ -19,7 +20,7 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
     raises unless the owner token matches; get_model_client() returns the model client."""
     # Imported here: api.py imports this module, and the request models live there.
     from api import (ClockIn, ContactIn, DisputeIn, EvidenceIn, GeneratorIn, InvoiceIn,
-                     SettlementIn, WorkerRunIn, _invoice_out, _not_built)
+                     SettlementIn, WorkerRunIn, _invoice_out)
 
     demo = APIRouter(prefix="/demo", tags=["demo: synthetic events"])
 
@@ -102,11 +103,14 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
     @demo.post("/generator/run", response_model=schemas.GeneratorRunOut)
     def demo_generate(body: GeneratorIn, fc: FinanceCore = Depends(core)):
         """Generate a fictional business (same seed, same data) and schedule its timeline."""
-        _not_built("1b")
+        # Starts at the current simulated time; a repeated seed adds nothing, the
+        # same seed with another size is a 409. The orchestrator applies events.
+        return generator.load(fc, body.seed, body.months, body.customers)
 
     @demo.get("/generator/truth", response_model=schemas.TruthOut)
     def demo_truth(seed: int, fc: FinanceCore = Depends(core)):
         """The planted problems and their expected outcomes, for evaluation."""
-        _not_built("1b")
+        # NotFound (404) for a seed that was never generated.
+        return generator.truth(fc, seed)
 
     return demo
