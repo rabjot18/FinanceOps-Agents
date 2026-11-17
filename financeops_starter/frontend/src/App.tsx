@@ -1,11 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { api, ApiError } from './api/client';
 import { TokenEntry } from './components/TokenEntry';
-import { CaseList } from './components/CaseList';
-import { Workspace } from './components/Workspace';
-import { DemoLab, type OpenCase } from './components/DemoLab';
+import { Shell } from './components/Shell';
+import { SessionProvider, type Session } from './session';
+import { HomePage } from './pages/HomePage';
+import { CasesPage } from './pages/CasesPage';
+import { CaseDetailPage } from './pages/CaseDetailPage';
+import { ActivityPage } from './pages/ActivityPage';
+import { AgentsPage } from './pages/AgentsPage';
+import { PolicyPage } from './pages/PolicyPage';
+import { DemoLabPage } from './pages/DemoLabPage';
 
 const TOKEN_KEY = 'financeops.ownerToken';
+const REJECTED = 'The server rejected the owner token. Enter it again.';
 
 function readStoredToken(): string | null {
   try {
@@ -24,34 +33,48 @@ function storeToken(token: string | null) {
   }
 }
 
-// The selected case lives in the URL hash (#case=<id>), so the page path is
-// always /app/ and the server never needs client-side routes.
-function caseFromHash(): string | null {
+// Milestone 4 links used "#case=<id>"; send them to the new case page.
+function upgradeOldHash() {
   const match = /^#case=(.+)$/.exec(window.location.hash);
-  if (!match?.[1]) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null; // a malformed link (e.g. "#case=%") just selects nothing
-  }
+  if (match?.[1]) window.location.hash = `#/cases/${match[1]}`;
 }
 
-export function App() {
+interface Props {
+  /** Live polling interval in ms (tests pass a small value). */
+  pollMs?: number;
+}
+
+export function App({ pollMs = 3000 }: Props) {
   const [token, setToken] = useState<string | null>(readStoredToken);
   const [notice, setNotice] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(caseFromHash);
-  // Bumped after any change, so the case list and workspace both refetch.
-  const [revision, setRevision] = useState(0);
-  const [openCase, setOpenCase] = useState<OpenCase | null>(null);
   const mainHeading = useRef<HTMLHeadingElement>(null);
+  const signOutRef = useRef<(n: string | null) => void>(() => {});
 
-  useEffect(() => {
-    const onHash = () => setSelected(caseFromHash());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  // One cache per page load. Any 401 (query or mutation) ends the session.
+  const [queryClient] = useState(() => {
+    const onError = (error: unknown) => {
+      if (error instanceof ApiError && error.kind === 'unauthorized') signOutRef.current(REJECTED);
+    };
+    return new QueryClient({
+      queryCache: new QueryCache({ onError }),
+      mutationCache: new MutationCache({ onError }),
+      defaultOptions: {
+        // Errors show with a Retry button; polling queries recover by themselves.
+        queries: { retry: false, staleTime: 1500, refetchOnWindowFocus: true },
+      },
+    });
+  });
 
-  const client = useMemo(() => api(token), [token]);
+  const signOut = useCallback(
+    (message: string | null) => {
+      storeToken(null);
+      setToken(null);
+      setNotice(message);
+      queryClient.clear();
+    },
+    [queryClient],
+  );
+  signOutRef.current = signOut;
 
   const signIn = (value: string) => {
     storeToken(value);
@@ -60,93 +83,35 @@ export function App() {
     setTimeout(() => mainHeading.current?.focus(), 0);
   };
 
-  const signOut = useCallback((message: string | null) => {
-    storeToken(null);
-    setToken(null);
-    setNotice(message);
-  }, []);
-
-  /** Every screen sends its errors here first: a 401 ends the session. */
-  const handleAuthError = useCallback(
-    (error: ApiError) => {
-      if (error.kind === 'unauthorized') {
-        signOut('The server rejected the owner token. Enter it again.');
-        return true;
-      }
-      return false;
-    },
-    [signOut],
+  const session = useMemo<Session | null>(
+    () => (token ? { client: api(token), signOut, pollMs } : null),
+    [token, signOut, pollMs],
   );
 
-  const selectCase = (caseId: string) => {
-    window.location.hash = `case=${encodeURIComponent(caseId)}`;
-    setSelected(caseId);
-  };
-
-  const changed = useCallback(() => setRevision((r) => r + 1), []);
-
-  if (!token) {
+  if (!session) {
     return <TokenEntry onSubmit={signIn} notice={notice} />;
   }
 
+  upgradeOldHash();
+
   return (
-    <div className="app">
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            FO
-          </span>
-          <h1 ref={mainHeading} tabIndex={-1}>
-            FinanceOps <span className="sub">owner console</span>
-          </h1>
-        </div>
-        <p className="banner-synthetic">Synthetic data · simulated delivery · no real money moves</p>
-        <button type="button" className="secondary" onClick={() => signOut(null)}>
-          Clear token
-        </button>
-      </header>
-      <div className="layout">
-        <div className="rail">
-          <CaseList
-            client={client}
-            revision={revision}
-            selected={selected}
-            onSelect={selectCase}
-            onAuthError={handleAuthError}
-          />
-        </div>
-        <main className="main-column">
-          {selected ? (
-            <Workspace
-              key={selected}
-              caseId={selected}
-              client={client}
-              revision={revision}
-              onChanged={changed}
-              onAuthError={handleAuthError}
-              onSnapshot={setOpenCase}
-            />
-          ) : (
-            <section className="panel">
-              <h2>No case selected</h2>
-              <p className="muted">Pick a case from the list, or load a synthetic scenario in the demo lab.</p>
-            </section>
-          )}
-        </main>
-        <aside className="lab-column" aria-label="Demo lab">
-          <div className="rail">
-          <DemoLab
-            client={client}
-            openCase={openCase && openCase.caseId === selected ? openCase : null}
-            onChanged={changed}
-            onLoaded={(ids) => {
-              if (ids[0]) selectCase(ids[0]);
-            }}
-            onAuthError={handleAuthError}
-          />
-          </div>
-        </aside>
-      </div>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <SessionProvider value={session}>
+        <HashRouter>
+          <Shell headingRef={mainHeading}>
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/cases" element={<CasesPage />} />
+              <Route path="/cases/:caseId" element={<CaseDetailPage />} />
+              <Route path="/activity" element={<ActivityPage />} />
+              <Route path="/agents" element={<AgentsPage />} />
+              <Route path="/policy" element={<PolicyPage />} />
+              <Route path="/demo" element={<DemoLabPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Shell>
+        </HashRouter>
+      </SessionProvider>
+    </QueryClientProvider>
   );
 }

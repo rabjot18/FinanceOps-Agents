@@ -20,6 +20,33 @@ export type Inbox = Schemas['InboxOut'];
 export type WorkerRunIn = Schemas['WorkerRunIn'];
 export type WorkerRunOut = Schemas['WorkerRunOut'];
 export type SettlementIn = Schemas['SettlementIn'];
+export type CaseListParams = {
+  state?: CaseState | null;
+  q?: string | null;
+  sort?: 'updated' | 'outstanding' | 'overdue' | 'customer';
+  limit?: number;
+  cursor?: string | null;
+};
+export type Attention = Schemas['AttentionOut'];
+export type AttentionApproval = Schemas['AttentionApproval'];
+export type AttentionEscalation = Schemas['AttentionEscalation'];
+export type Summary = Schemas['SummaryOut'];
+export type ActivityOut = Schemas['ActivityOut'];
+export type ActivityItem = Schemas['ActivityItem'];
+export type Escalation = Schemas['EscalationOut'];
+export type AutonomyStatus = Schemas['AutonomyStatus'];
+export type AgentInfo = Schemas['AgentInfo'];
+export type AgentList = Schemas['AgentListOut'];
+export type Briefing = Schemas['BriefingOut'];
+export type Policy = Schemas['PolicyOut'];
+export type PolicyIn = Schemas['PolicyIn'];
+export type AutonomyRule = Schemas['AutonomyRule'];
+export type AutonomyRuleIn = Schemas['AutonomyRuleIn'];
+export type PolicyPreview = Schemas['PolicyPreviewOut'];
+export type Clock = Schemas['ClockOut'];
+export type ClockIn = Schemas['ClockIn'];
+export type GeneratorIn = Schemas['GeneratorIn'];
+export type GeneratorRun = Schemas['GeneratorRunOut'];
 
 export type ErrorKind =
   | 'unauthorized' // 401: token missing or wrong
@@ -106,9 +133,22 @@ async function request<T>(
 const seg = encodeURIComponent;
 
 /** All calls the owner console makes. `token` is the owner's bearer token. */
+/** "?a=1&b=2" from the set (non-empty) values, in the order given. */
+function query(params: Record<string, string | number | null | undefined>): string {
+  const parts = Object.entries(params)
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
 export function api(token: string | null) {
   return {
-    listCases: () => request<CaseListOut>('GET', '/cases', token),
+    listCases: (params: CaseListParams = {}) =>
+      request<CaseListOut>(
+        'GET',
+        `/cases${query({ state: params.state, q: params.q, sort: params.sort, limit: params.limit, cursor: params.cursor })}`,
+        token,
+      ),
     workspace: (caseId: string) => request<Workspace>('GET', `/cases/${seg(caseId)}/workspace`, token),
     propose: (caseId: string, body: ProposalIn) =>
       request<Action>('POST', `/cases/${seg(caseId)}/actions`, token, body),
@@ -119,6 +159,24 @@ export function api(token: string | null) {
     execute: (actionId: string) => request<Action>('POST', `/actions/${seg(actionId)}/execute`, token),
     /** Calls a PAID model on the server. Only after an explicit owner confirm. */
     investigate: (caseId: string) => request<AgentRun>('POST', `/cases/${seg(caseId)}/investigate`, token),
+    agentRun: (runId: string) => request<AgentRun>('GET', `/agent-runs/${seg(runId)}`, token),
+
+    // Milestone 5: the owner's overview, live feed and controls.
+    attention: () => request<Attention>('GET', '/attention', token),
+    summary: () => request<Summary>('GET', '/summary', token),
+    activity: (after: number, limit = 200) => request<ActivityOut>('GET', `/activity${query({ after, limit })}`, token),
+    resolveEscalation: (escalationId: string, note: string | null) =>
+      request<Escalation>('POST', `/escalations/${seg(escalationId)}/resolve`, token, { note }),
+    autonomy: () => request<AutonomyStatus>('GET', '/autonomy', token),
+    pauseAutonomy: (reason: string | null) => request<AutonomyStatus>('POST', '/autonomy/pause', token, { reason }),
+    resumeAutonomy: () => request<AutonomyStatus>('POST', '/autonomy/resume', token),
+    agents: () => request<AgentList>('GET', '/agents', token),
+    pauseAgent: (name: string) => request<AgentInfo>('POST', `/agents/${seg(name)}/pause`, token),
+    resumeAgent: (name: string) => request<AgentInfo>('POST', `/agents/${seg(name)}/resume`, token),
+    latestBriefing: () => request<Briefing>('GET', '/briefings/latest', token),
+    policy: () => request<Policy>('GET', '/policy', token),
+    savePolicy: (body: PolicyIn) => request<Policy>('POST', '/policy', token, body),
+    previewPolicy: (body: PolicyIn) => request<PolicyPreview>('POST', '/policy/preview', token, body),
 
     // Demo lab: synthetic events, simulated delivery. Only exists when the
     // server runs with FINANCEOPS_ENABLE_DEMO=1.
@@ -140,6 +198,9 @@ export function api(token: string | null) {
         run_investigations: false,
       } satisfies WorkerRunIn),
     inbox: () => request<Inbox>('GET', '/demo/inbox', token),
+    clock: () => request<Clock>('GET', '/demo/clock', token),
+    setClock: (body: ClockIn) => request<Clock>('POST', '/demo/clock', token, body),
+    runGenerator: (body: GeneratorIn) => request<GeneratorRun>('POST', '/demo/generator/run', token, body),
   };
 }
 
@@ -152,4 +213,14 @@ export function newId(prefix: string): string {
       ? crypto.randomUUID().replace(/-/g, '').slice(0, 10)
       : Math.random().toString(36).slice(2, 12);
   return `${prefix}-${random}`;
+}
+
+/** Any thrown value as an ApiError (unexpected ones count as server errors). */
+export function asApiError(err: unknown): ApiError {
+  return err instanceof ApiError ? err : new ApiError('server', null, String(err));
+}
+
+/** A frozen Milestone 5 route whose logic has not landed yet (503 "Not built yet ..."). */
+export function isNotBuilt(error: ApiError | null | undefined): boolean {
+  return !!error && error.kind === 'unavailable' && /not built yet/i.test(error.detail);
 }

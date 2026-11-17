@@ -1,16 +1,17 @@
 import { useState, type FormEvent } from 'react';
 import { newId, type ApiError, type ProposalIn, type Workspace } from '../api/client';
-import type { Mutate } from './Workspace';
+import type { useChange } from '../api/queries';
 
 interface Props {
   caseId: string;
   evidence: Workspace['evidence'];
-  mutate: Mutate;
+  /** The case page's change runner, so a 409 shows on the page banner. */
+  run: ReturnType<typeof useChange>['run'];
   refreshing: boolean;
 }
 
 /** A manual owner proposal. The server renders the message from stored facts. */
-export function ProposeForm({ caseId, evidence, mutate, refreshing }: Props) {
+export function ProposeForm({ caseId, evidence, run, refreshing }: Props) {
   const [kind, setKind] = useState<ProposalIn['kind']>('collection_reminder');
   const [picked, setPicked] = useState<string[]>([]);
   const [rationale, setRationale] = useState('');
@@ -30,7 +31,7 @@ export function ProposeForm({ caseId, evidence, mutate, refreshing }: Props) {
       evidence_ids: picked,
       rationale: rationale.trim() || null,
     };
-    const result = await mutate((c) => c.propose(caseId, body));
+    const result = await run((c) => c.propose(caseId, body));
     setBusy(false);
     if (result.ok) {
       setPicked([]);
