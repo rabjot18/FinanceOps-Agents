@@ -224,8 +224,8 @@ job kinds `cadence_step`, `briefing`.
 |---|---|---|---|
 | 0 ✅ | lead | Freeze the new contract (`schemas.py`, `openapi.json`, regenerated types); schema V5 migration; read-side routes and owner controls | Done 17 Nov 2026: 195 backend tests, 17 frontend, 2 browser |
 | 1a ✅ | lead | Events + ingestion, autonomy rules, orchestrator, kill switch, policy preview, clock playback | Done 17 Nov 2026: `orchestrator.py`, 28 tests in `test_orchestrator.py`; 225 backend tests; reviewed (7 medium findings fixed). Not yet: model budget enforcement and replan counting (step 2); policy preview is an estimate (it guesses each case's next action) |
-| 1b | worker (worktree) | `generator.py`, `truth.json`, `eval_run.py`, demo generator/clock routes | same seed gives same timeline; eval runs end to end with the fake client |
-| 1c | worker (worktree) | Frontend redesign against the frozen contract with mocked fetch | Vitest and the e2e suite pass |
+| 1b ✅ | worker (worktree) | `generator.py`, truth in `generator_runs`, `eval_run.py`, demo generator routes | Merged 17 Nov 2026. Evals with the scripted model: 0 unauthorized actions (seed 42/3 months: 29/30 correct; seed 7/6 months: 82/90). Remaining misses: owner approval where the truth file only accepts "information requested" or "escalated" (label fix) |
+| 1c ✅ | worker (worktree) | Frontend redesign against the frozen contract with mocked fetch | Merged 17 Nov 2026: 7 pages, react-query polling, 62 Vitest tests, 2 e2e flows |
 | 2 | lead | Agent refactor, replanning, collections tools, briefing agent | agent tests pass |
 | 3 | lead | Merge 1b and 1c one at a time; full replay demo; reviews (security, code, python, react) | acceptance list below passes |
 | 4 | you | Optional live eval (`eval_run.py --live`, costs money) | score recorded in `BUILD_PLAN.md` |
