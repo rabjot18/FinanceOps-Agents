@@ -57,11 +57,6 @@ class OwnerRoutesTests(Milestone5TestCase):
             with self.subTest(route=f"{method} {path}"):
                 self.call(method, path, headers={}, expect=401)
 
-    def test_routes_for_later_steps_say_not_built(self):
-        detail = self.call("POST", "/policy/preview", POLICY, expect=503)["detail"]
-        self.assertIn("Not built yet", detail)
-        # /demo/generator/* landed in step 1b: see test_generator.GeneratorRouteTests.
-
 
 class CaseListTests(Milestone5TestCase):
     def setUp(self):
@@ -189,7 +184,8 @@ class AttentionTests(Milestone5TestCase):
         queue = self.call("GET", "/attention")
         self.assertEqual([a["action"]["id"] for a in queue["approvals"]], ["a-1"])
         self.assertEqual(queue["approvals"][0]["outstanding_cents"], 100_000)
-        self.assertIsNone(queue["approvals"][0]["action"]["autonomy"])
+        autonomy = queue["approvals"][0]["action"]["autonomy"]
+        self.assertEqual((autonomy["mode"], autonomy["reasons"]), ("approve", ["proposed by the owner"]))
         self.assertEqual([e["escalation"]["id"] for e in queue["escalations"]], ["esc-1"])
         self.assertEqual(self.call("GET", "/summary")["awaiting_owner"], 2)
         row = self.call("GET", "/cases")["cases"][0]

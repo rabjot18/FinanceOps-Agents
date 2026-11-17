@@ -207,7 +207,7 @@ Owner token:
 - `GET /agents`, `POST /agents/{name}/pause|resume`
 - `GET /briefings/latest` (404 until the first briefing)
 - `GET`/`POST /policy`: add `autonomy_rules`, `cadence_days`, `daily_model_budget_cents` (omitted = keep)
-- `POST /policy/preview`: *stub, step 1a*
+- `POST /policy/preview` (built in step 1a)
 - `GET /cases/{id}/workspace`: adds `escalations` and `autonomy`; actions add `autonomy` and `superseded_by`; invoices add `due_at`; agent runs add `agent`
 
 Demo only:
@@ -223,7 +223,7 @@ job kinds `cadence_step`, `briefing`.
 | Step | Owner | Work | Done when |
 |---|---|---|---|
 | 0 ✅ | lead | Freeze the new contract (`schemas.py`, `openapi.json`, regenerated types); schema V5 migration; read-side routes and owner controls | Done 17 Nov 2026: 195 backend tests, 17 frontend, 2 browser |
-| 1a | lead | Events + ingestion, autonomy rules, orchestrator, kill switch | core tests below pass with the fake client |
+| 1a ✅ | lead | Events + ingestion, autonomy rules, orchestrator, kill switch, policy preview, clock playback | Done 17 Nov 2026: `orchestrator.py`, 28 tests in `test_orchestrator.py`; 225 backend tests; reviewed (7 medium findings fixed). Not yet: model budget enforcement and replan counting (step 2); policy preview is an estimate (it guesses each case's next action) |
 | 1b | worker (worktree) | `generator.py`, `truth.json`, `eval_run.py`, demo generator/clock routes | same seed gives same timeline; eval runs end to end with the fake client |
 | 1c | worker (worktree) | Frontend redesign against the frozen contract with mocked fetch | Vitest and the e2e suite pass |
 | 2 | lead | Agent refactor, replanning, collections tools, briefing agent | agent tests pass |

@@ -133,6 +133,13 @@ independently redesign the same interfaces.
   CAD 5,000 (`core.AUTO_REMINDER_LIMIT_CENTS`).
 - The owner's kill switch (`autonomy_state`) and per-agent pauses
   (`agent_controls`) are checked before every automatic execution or agent run.
+  `apply_autonomy` re-evaluates, checks the switch, approves and queues in one
+  transaction; the worker holds automatically approved messages while paused.
+- A reminder proposed by the agent always waits for the owner (the agent only
+  sees non-routine cases); agent requests for information follow the rules.
+- An escalation caused by an event is opened in the same transaction that
+  marks the event applied. A case paid in full resolves and closes its open
+  escalations. Events with equal timestamps apply in stored order.
 - Routing is code (orchestrator), not a model. Routine reminders need no model
   call. At most 2 replans per triggering event and the policy's daily model
   budget; exceeding either opens an escalation instead.
