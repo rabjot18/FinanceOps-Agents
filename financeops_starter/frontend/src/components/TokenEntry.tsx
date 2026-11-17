@@ -17,7 +17,11 @@ export function TokenEntry({ onSubmit, notice }: Props) {
   return (
     <main className="token-page">
       <form className="panel token-form" onSubmit={submit} aria-labelledby="token-title">
+        <span className="brand-mark" aria-hidden="true">
+          FO
+        </span>
         <h1 id="token-title">FinanceOps owner console</h1>
+        <p className="lead">Review receivable cases and approve every message before it goes out.</p>
         <p className="warning-note">
           Local demo only, not production authentication. The token stays in this browser tab
           (memory and sessionStorage) until you clear it or close the tab.

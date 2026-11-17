@@ -37,10 +37,11 @@ export function ActionCard({ action, mutate, refreshing }: Props) {
     <article className="action-card" aria-label={`Action ${action.id}`}>
       <header className="action-head">
         <h4>
-          {humanize(action.kind)} <code>{action.id}</code>
+          <span className="kind">{humanize(action.kind)}</span> <code>{action.id}</code>
         </h4>
         <span className={`badge status-${action.status}`}>{humanize(action.status)}</span>
       </header>
+      <Stepper status={action.status} />
 
       <dl className="lifecycle">
         <div>
@@ -81,7 +82,7 @@ export function ActionCard({ action, mutate, refreshing }: Props) {
       </dl>
 
       {action.rationale && (
-        <details>
+        <details className="rationale">
           <summary>Rationale (not part of the message)</summary>
           <PlainText text={action.rationale} />
         </details>
@@ -89,9 +90,10 @@ export function ActionCard({ action, mutate, refreshing }: Props) {
 
       {payload ? (
         <section className="message" aria-label="Exact message">
-          <h5>
-            Exact message <SimulatedTag>Simulated delivery</SimulatedTag>
-          </h5>
+          <div className="message-bar">
+            <h5>Exact message</h5>
+            <SimulatedTag>Simulated delivery</SimulatedTag>
+          </div>
           <dl>
             <div>
               <dt>To</dt>
@@ -108,7 +110,7 @@ export function ActionCard({ action, mutate, refreshing }: Props) {
           </dl>
           <PlainText text={payload.body} />
           {hash && (
-            <p className="muted">
+            <p className="muted hash">
               Payload hash <code title={hash}>{shortHash(hash)}</code> · invoice v{payload.invoice_version}
               {payload.policy_version != null && <> · policy v{payload.policy_version}</>}
             </p>
@@ -156,5 +158,37 @@ export function ActionCard({ action, mutate, refreshing }: Props) {
         </div>
       )}
     </article>
+  );
+}
+
+// The lifecycle the backend reports, drawn as steps. Display only: the status
+// comes from the server and nothing here decides what is allowed.
+const STEPS = ['Proposed', 'Approved', 'Queued', 'Delivered'] as const;
+const STEP_OF: Record<Action['status'], number> = {
+  proposed: 0,
+  approved: 1,
+  rejected: 1,
+  queued: 2,
+  dispatched: 3, // sent to the (simulated) inbox
+  cancelled: 2,
+  failed: 2,
+  follow_up_due: 3,
+  executed_simulated: 3,
+};
+const STOPPED: ReadonlySet<Action['status']> = new Set(['rejected', 'cancelled', 'failed']);
+
+function Stepper({ status }: { status: Action['status'] }) {
+  const current = STEP_OF[status];
+  const stopped = STOPPED.has(status);
+  const complete = current === STEPS.length - 1 && !stopped;
+  const className = ['stepper', stopped ? 'stopped' : '', complete ? 'complete' : ''].join(' ').trim();
+  return (
+    <ol className={className} aria-hidden="true">
+      {STEPS.map((label, i) => (
+        <li key={label} className={i < current ? 'done' : i === current ? 'current' : ''}>
+          {i === current && stopped ? humanize(status) : label}
+        </li>
+      ))}
+    </ol>
   );
 }

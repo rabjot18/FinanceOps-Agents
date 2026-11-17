@@ -5,6 +5,20 @@ export function StateBadge({ state }: { state: CaseState }) {
   return <span className={`badge state-${state}`}>{humanize(state)}</span>;
 }
 
+/** Initials for a customer name, e.g. "Maple Bakery (synthetic)" -> "MB". */
+export function initials(name: string): string {
+  const words = name.replace(/\(.*?\)/g, '').trim().split(/\s+/).filter(Boolean);
+  return words.slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('') || '?';
+}
+
+export function Avatar({ name, large = false }: { name: string; large?: boolean }) {
+  return (
+    <span className={large ? 'avatar lg' : 'avatar'} aria-hidden="true">
+      {initials(name)}
+    </span>
+  );
+}
+
 export function SimulatedTag({ children = 'Simulated' }: { children?: string }) {
   return <span className="tag-simulated">{children}</span>;
 }

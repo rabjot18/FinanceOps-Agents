@@ -92,22 +92,29 @@ export function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1 ref={mainHeading} tabIndex={-1}>
-          FinanceOps owner console
-        </h1>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            FO
+          </span>
+          <h1 ref={mainHeading} tabIndex={-1}>
+            FinanceOps <span className="sub">owner console</span>
+          </h1>
+        </div>
         <p className="banner-synthetic">Synthetic data · simulated delivery · no real money moves</p>
         <button type="button" className="secondary" onClick={() => signOut(null)}>
           Clear token
         </button>
       </header>
       <div className="layout">
-        <CaseList
-          client={client}
-          revision={revision}
-          selected={selected}
-          onSelect={selectCase}
-          onAuthError={handleAuthError}
-        />
+        <div className="rail">
+          <CaseList
+            client={client}
+            revision={revision}
+            selected={selected}
+            onSelect={selectCase}
+            onAuthError={handleAuthError}
+          />
+        </div>
         <main className="main-column">
           {selected ? (
             <Workspace
@@ -122,9 +129,12 @@ export function App() {
           ) : (
             <section className="panel">
               <h2>No case selected</h2>
-              <p>Pick a case from the list, or load a synthetic scenario in the demo lab.</p>
+              <p className="muted">Pick a case from the list, or load a synthetic scenario in the demo lab.</p>
             </section>
           )}
+        </main>
+        <aside className="lab-column" aria-label="Demo lab">
+          <div className="rail">
           <DemoLab
             client={client}
             openCase={openCase && openCase.caseId === selected ? openCase : null}
@@ -134,7 +144,8 @@ export function App() {
             }}
             onAuthError={handleAuthError}
           />
-        </main>
+          </div>
+        </aside>
       </div>
     </div>
   );
