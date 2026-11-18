@@ -18,7 +18,7 @@ import {
 
 function home(routes: Parameters<typeof mockFetch>[0] = {}) {
   const fetchMock = mockFetch({ ...shellRoutes(), 'GET /attention': { body: attention() }, ...routes });
-  signedInAt('/');
+  signedInAt('/home');
   const user = userEvent.setup();
   render(<App />);
   return { fetchMock, user };

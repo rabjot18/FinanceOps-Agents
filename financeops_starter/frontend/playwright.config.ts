@@ -17,10 +17,9 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command:
-      'cd .. && FINANCEOPS_DB="$(mktemp -d)/e2e.sqlite3" FINANCEOPS_ENABLE_DEMO=1 ' +
-      'FINANCEOPS_OWNER_TOKEN=e2e-owner-token ' +
-      `exec .venv/bin/uvicorn api:create_app --factory --host 127.0.0.1 --port ${port}`,
+    // Cross-platform launcher (Windows, macOS, Linux): fresh temp DB, demo routes on,
+    // throwaway owner token, uvicorn from ../.venv (Scripts\ on Windows, bin/ elsewhere).
+    command: `node e2e/start-server.mjs ${port}`,
     url: `http://127.0.0.1:${port}/app/`,
     reuseExistingServer: false,
     timeout: 60_000,

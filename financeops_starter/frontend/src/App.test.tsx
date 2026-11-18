@@ -19,7 +19,7 @@ import {
 const BANNER = 'Synthetic data · simulated delivery · no real money moves';
 
 describe('token entry', () => {
-  it('asks for the token, labels it demo-only, then loads the home page with it', async () => {
+  it('asks for the token, labels it demo-only, then opens the Flow page with it', async () => {
     const fetchMock = mockFetch(shellRoutes());
     const user = userEvent.setup();
     render(<App />);
@@ -30,7 +30,7 @@ describe('token entry', () => {
     await user.type(screen.getByLabelText('Owner token'), TOKEN);
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
-    expect(await screen.findByRole('heading', { name: 'Needs you' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 2, name: 'Flow' })).toBeInTheDocument();
     expect(sessionStorage.getItem('financeops.ownerToken')).toBe(TOKEN);
     await waitFor(() => expect(callsTo(fetchMock, 'GET /attention')[0]?.headers.Authorization).toBe(`Bearer ${TOKEN}`));
   });
@@ -51,7 +51,7 @@ describe('token entry', () => {
       'GET /attention': { body: attention() },
       'POST /actions/act-1/approve': { status: 401, body: { detail: 'Owner authentication required' } },
     });
-    signedInAt('/');
+    signedInAt('/home');
     const user = userEvent.setup();
     render(<App />);
     const queue = await screen.findByRole('list', { name: 'Actions waiting for you' });
@@ -82,11 +82,22 @@ describe('app shell', () => {
     render(<App />);
     const nav = await screen.findByRole('navigation', { name: 'Main' });
 
+    // Three primary pages; the rest of the console sits under a collapsed "Advanced" group.
+    expect(await screen.findByRole('heading', { level: 2, name: 'Flow' })).toBeInTheDocument();
+    expect(within(nav).queryByRole('link', { name: /Cases/ })).toBeNull();
+    const advanced = within(nav).getByRole('button', { name: /Advanced/ });
+    expect(advanced).toHaveAttribute('aria-expanded', 'false');
+    await user.click(advanced);
+    expect(advanced).toHaveAttribute('aria-expanded', 'true');
+
     for (const [link, heading] of [
+      ['Your decisions', 'Your decisions'],
+      ['Outcomes', 'Outcomes'],
       ['Cases', 'Cases'],
       ['Activity', 'Activity'],
       ['Agents', 'Agents'],
       ['Needs you', 'Needs you'],
+      ['Flow', 'Flow'],
     ] as const) {
       await user.click(within(nav).getByRole('link', { name: new RegExp(link) }));
       expect(await screen.findByRole('heading', { level: 2, name: heading })).toBeInTheDocument();

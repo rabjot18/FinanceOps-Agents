@@ -1,28 +1,17 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { keys, useActivityFeed, useAttention, useAutonomy, useChange, useSummary } from '../api/queries';
-import type { Attention } from '../api/client';
-import { formatCents, humanize } from '../format';
+import type { Attention, Summary } from '../api/client';
+import { formatCents, formatUsdCents, humanize } from '../format';
 import { useSession } from '../session';
 import { ConfirmDialog } from './common';
+import { RunMonthButton, RunMonthProvider } from './RunMonth';
+import { ToastContext, useToast, type PushToast, type Toast } from './toast';
+
+export { useToast };
 
 // --- toasts ----------------------------------------------------------------
-
-interface Toast {
-  id: number;
-  title: string;
-  body?: string;
-  to?: string;
-  tone?: 'info' | 'success' | 'attention';
-}
-
-type PushToast = (toast: Omit<Toast, 'id'>) => void;
-const ToastContext = createContext<PushToast>(() => {});
-
-export function useToast(): PushToast {
-  return useContext(ToastContext);
-}
 
 const TOAST_MS = 8000;
 
@@ -171,6 +160,45 @@ function KillSwitch() {
   );
 }
 
+// --- spend meter -----------------------------------------------------------
+
+/** Model spend (US cents) against the caps, as the backend reports it. */
+export function SpendMeter({ s }: { s: Summary }) {
+  const capped = !s.model_calls_allowed;
+  const share = s.daily_cap_cents > 0 ? Math.min(1, s.spend_real_today_cents / s.daily_cap_cents) : 0; // bar width only
+  return (
+    <div
+      className={capped ? 'spend-meter capped' : 'spend-meter'}
+      role="status"
+      aria-label="Model spend"
+      title="Model spend in US dollars; invoices are in CAD"
+    >
+      <span className="spend-track" aria-hidden="true">
+        <span className="spend-fill" style={{ width: `${capped ? 100 : Math.round(share * 100)}%` }} />
+      </span>
+      <span className="spend-text">
+        {capped ? (
+          <strong>Cap reached — agents paused, decisions come to you</strong>
+        ) : (
+          <>
+            <strong>{formatUsdCents(s.spend_real_today_cents)}</strong> today
+            {s.daily_cap_cents > 0 && <> of {formatUsdCents(s.daily_cap_cents, true)}</>}
+            <span className="spend-sep"> · </span>
+            {formatUsdCents(s.spend_total_cents)}
+            {s.total_cap_cents > 0 && <> of {formatUsdCents(s.total_cap_cents, true)}</>} total
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function TopSpend() {
+  const summary = useSummary();
+  if (!summary.data) return null;
+  return <SpendMeter s={summary.data} />;
+}
+
 // --- shell -----------------------------------------------------------------
 
 function NavCount() {
@@ -184,14 +212,84 @@ function NavCount() {
   );
 }
 
-const NAV: { to: string; label: string; icon: string; end?: boolean }[] = [
-  { to: '/', label: 'Needs you', icon: '◎', end: true },
+interface NavItem {
+  to: string;
+  label: string;
+  icon: string;
+  end?: boolean;
+  count?: boolean;
+}
+
+// The three things the owner comes back for; the full console sits under "Advanced".
+const PRIMARY: NavItem[] = [
+  { to: '/', label: 'Flow', icon: '⇢', end: true },
+  { to: '/decisions', label: 'Your decisions', icon: '◎', count: true },
+  { to: '/outcomes', label: 'Outcomes', icon: '★' },
+];
+
+const ADVANCED: NavItem[] = [
+  { to: '/home', label: 'Needs you', icon: '◉' },
   { to: '/cases', label: 'Cases', icon: '▤' },
   { to: '/activity', label: 'Activity', icon: '≋' },
   { to: '/agents', label: 'Agents', icon: '◇' },
   { to: '/policy', label: 'Policy', icon: '§' },
   { to: '/demo', label: 'Demo Lab', icon: '⚗' },
 ];
+
+function isAdvanced(pathname: string): boolean {
+  return ADVANCED.some((item) => pathname === item.to || pathname.startsWith(`${item.to}/`));
+}
+
+function NavItems({ items }: { items: NavItem[] }) {
+  return (
+    <ul>
+      {items.map((item) => (
+        <li key={item.to}>
+          <NavLink to={item.to} end={item.end} className="nav-link">
+            <span className="nav-icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            <span className="nav-label">{item.label}</span>
+            {item.count && <NavCount />}
+          </NavLink>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function MainNav() {
+  const { pathname } = useLocation();
+  const onAdvanced = isAdvanced(pathname);
+  const [open, setOpen] = useState(onAdvanced);
+  useEffect(() => {
+    if (onAdvanced) setOpen(true);
+  }, [onAdvanced]);
+  return (
+    <nav aria-label="Main">
+      <NavItems items={PRIMARY} />
+      <div className="nav-group">
+        <button
+          type="button"
+          className="nav-group-toggle"
+          aria-expanded={open}
+          aria-controls="nav-advanced"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span className="nav-caret" aria-hidden="true">
+            {open ? '▾' : '▸'}
+          </span>
+          Advanced
+        </button>
+        {open && (
+          <div id="nav-advanced">
+            <NavItems items={ADVANCED} />
+          </div>
+        )}
+      </div>
+    </nav>
+  );
+}
 
 interface ShellProps {
   children: ReactNode;
@@ -230,47 +328,39 @@ export function Shell({ children, headingRef }: ShellProps) {
 
   return (
     <ToastContext.Provider value={push}>
-      <div className="shell">
-        <aside className="sidebar">
-          <div className="brand">
-            <span className="brand-mark" aria-hidden="true">
-              FO
-            </span>
-            <h1 ref={headingRef} tabIndex={-1}>
-              FinanceOps <span className="sub">owner console</span>
-            </h1>
-          </div>
-          <nav aria-label="Main">
-            <ul>
-              {NAV.map((item) => (
-                <li key={item.to}>
-                  <NavLink to={item.to} end={item.end} className="nav-link">
-                    <span className="nav-icon" aria-hidden="true">
-                      {item.icon}
-                    </span>
-                    <span className="nav-label">{item.label}</span>
-                    {item.to === '/' && <NavCount />}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        </aside>
-        <div className="shell-main">
-          <header className="topbar">
-            <p className="banner-synthetic">Synthetic data · simulated delivery · no real money moves</p>
-            <div className="topbar-actions">
-              <KillSwitch />
-              <button type="button" className="secondary" onClick={() => signOut(null)}>
-                Clear token
-              </button>
+      <RunMonthProvider>
+        <div className="shell">
+          <aside className="sidebar">
+            <div className="brand">
+              <span className="brand-mark" aria-hidden="true">
+                FO
+              </span>
+              <h1 ref={headingRef} tabIndex={-1}>
+                FinanceOps <span className="sub">owner console</span>
+              </h1>
             </div>
-          </header>
-          <main className="page">{children}</main>
+            <MainNav />
+            <p className="banner-synthetic sidebar-banner">Synthetic data · simulated delivery · no real money moves</p>
+          </aside>
+          <div className="shell-main">
+            <header className="topbar">
+              <div className="topbar-left">
+                <RunMonthButton />
+                <TopSpend />
+              </div>
+              <div className="topbar-actions">
+                <KillSwitch />
+                <button type="button" className="secondary" onClick={() => signOut(null)}>
+                  Clear token
+                </button>
+              </div>
+            </header>
+            <main className="page">{children}</main>
+          </div>
+          <LiveUpdates push={push} />
+          <Toaster toasts={toasts} dismiss={dismiss} />
         </div>
-        <LiveUpdates push={push} />
-        <Toaster toasts={toasts} dismiss={dismiss} />
-      </div>
+      </RunMonthProvider>
     </ToastContext.Provider>
   );
 }

@@ -30,3 +30,17 @@ export function shortHash(hash: string): string {
 export function humanize(value: string): string {
   return value.replace(/_/g, ' ');
 }
+
+/**
+ * Model spend is in US cents (invoices are CAD). Shown as "$1.20"; with
+ * `trimWhole`, whole dollars drop the cents ("$25").
+ */
+export function formatUsdCents(cents: number, trimWhole = false): string {
+  const whole = trimWhole && cents % 100 === 0;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
+  }).format(cents / 100); // unit conversion for display only
+}
