@@ -3,7 +3,8 @@ and runs due jobs.
 
     .venv/bin/python worker.py              # one round, then exit
     .venv/bin/python worker.py --loop       # keep going every few seconds
-    .venv/bin/python worker.py --loop --investigate   # also run re-investigations (COSTS MONEY)
+    .venv/bin/python worker.py --loop --agents   # also run the agents (COSTS MONEY, within
+                                                 # the policy's daily model budget)
 
 Uses FINANCEOPS_DB like the API. Run ONE worker per database. With
 FINANCEOPS_ENABLE_DEMO=1 it follows the demo's simulated clock.
@@ -34,11 +35,13 @@ log = logging.getLogger("financeops.worker")
 INVESTIGATE_RETRY_MINUTES = 5
 
 
-def run_once(core, adapter, investigator_factory=None):
-    """One round: deliver what is due, then run due jobs. Returns a summary.
+def run_once(core, adapter, investigator_factory=None, briefing_factory=None):
+    """One round: orchestrate, deliver what is due, then run due jobs.
 
     investigator_factory(core) -> Investigator, or None to leave
     re-investigation jobs waiting (they cost a model call).
+    briefing_factory(core) -> BriefingAgent, or None for no daily briefing.
+    Both run only within the policy's daily model budget.
     """
     result = {"sent": [], "unknown": [], "cancelled": [], "failed": [],
               "follow_ups_elapsed": [], "investigations": [], "errors": []}
@@ -46,8 +49,9 @@ def run_once(core, adapter, investigator_factory=None):
     # delivered in this same round. Its summary goes to the log; the owner
     # sees it in the activity feed. (The returned shape is a frozen contract.)
     try:
+        briefing = briefing_factory(core).run if briefing_factory else None
         log.debug("orchestration: %s", orchestrator.run_cycle(
-            core, has_model=investigator_factory is not None))
+            core, has_model=investigator_factory is not None, briefing=briefing))
     except Exception as exc:
         log.exception("orchestration failed")
         result["errors"].append({"item": "orchestrator", "error": type(exc).__name__})
@@ -65,7 +69,8 @@ def run_once(core, adapter, investigator_factory=None):
                 if core.run_settlement_check(job["id"])["elapsed"]:
                     result["follow_ups_elapsed"].append(job["id"])
             elif (job["kind"] == "investigate" and investigator_factory is not None
-                  and not core.agent_paused("collections")):
+                  and not core.agent_paused("collections")
+                  and orchestrator.model_allowed(core)):
                 _investigate(core, investigator_factory, job["id"], result)
         except Exception as exc:
             log.exception("job %s failed", job["id"])
@@ -142,20 +147,23 @@ def main():
     parser = argparse.ArgumentParser(description="FinanceOps worker")
     parser.add_argument("--loop", action="store_true", help="keep running")
     parser.add_argument("--interval", type=float, default=5.0, help="seconds between rounds")
-    parser.add_argument("--investigate", action="store_true",
-                        help="run re-investigation jobs with the real model (costs money)")
+    parser.add_argument("--agents", "--investigate", dest="investigate", action="store_true",
+                        help="run the agents (investigations, daily briefing) with the real "
+                             "model, within the policy's daily model budget (costs money)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     path = os.environ.get("FINANCEOPS_DB", "financeops.sqlite3")
     simulated = os.environ.get("FINANCEOPS_ENABLE_DEMO", "0") == "1"
     adapter = SimulatedInbox(path)
-    factory = None
+    factory = briefing_factory = None
     if args.investigate:
         import anthropic
         from agent import CLIENT_MAX_RETRIES, CLIENT_TIMEOUT_SECONDS, Investigator
+        from briefing import BriefingAgent
         client = anthropic.Anthropic(timeout=CLIENT_TIMEOUT_SECONDS, max_retries=CLIENT_MAX_RETRIES)
-        factory = lambda core: Investigator(core, client)  # noqa: E731
+        factory = lambda core: Investigator(core, client, enforce_budget=True)  # noqa: E731
+        briefing_factory = lambda core: BriefingAgent(core, client)  # noqa: E731
 
     last_round = time.monotonic()
     while True:
@@ -164,7 +172,7 @@ def main():
             now = time.monotonic()
             core.tick_playback(now - last_round)  # demo: a playing clock moves on
             last_round = now
-            log.info("round: %s", run_once(core, adapter, factory))
+            log.info("round: %s", run_once(core, adapter, factory, briefing_factory))
         except Exception:
             if not args.loop:
                 raise

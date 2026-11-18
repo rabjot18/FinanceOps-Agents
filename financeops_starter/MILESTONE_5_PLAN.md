@@ -226,7 +226,7 @@ job kinds `cadence_step`, `briefing`.
 | 1a ✅ | lead | Events + ingestion, autonomy rules, orchestrator, kill switch, policy preview, clock playback | Done 17 Nov 2026: `orchestrator.py`, 28 tests in `test_orchestrator.py`; 225 backend tests; reviewed (7 medium findings fixed). Not yet: model budget enforcement and replan counting (step 2); policy preview is an estimate (it guesses each case's next action) |
 | 1b ✅ | worker (worktree) | `generator.py`, truth in `generator_runs`, `eval_run.py`, demo generator routes | Merged 17 Nov 2026. Evals with the scripted model: 0 unauthorized actions (seed 42/3 months: 29/30 correct; seed 7/6 months: 82/90). Remaining misses: owner approval where the truth file only accepts "information requested" or "escalated" (label fix) |
 | 1c ✅ | worker (worktree) | Frontend redesign against the frozen contract with mocked fetch | Merged 17 Nov 2026: 7 pages, react-query polling, 62 Vitest tests, 2 e2e flows |
-| 2 | lead | Agent refactor, replanning, collections tools, briefing agent | agent tests pass |
+| 2 ✅ | lead | Escalate tool, replanning (supersede + limit), briefing agent, model spend + daily budget | 17 Nov 2026: 281 backend tests (11 in `test_step2.py`); evals with the scripted model: 0 unauthorized (seed 42: 29/30, seed 7: 82/90). Agent messages wait for the owner until a live eval passes (`FINANCEOPS_AGENT_AUTOSEND`) |
 | 3 | lead | Merge 1b and 1c one at a time; full replay demo; reviews (security, code, python, react) | acceptance list below passes |
 | 4 | you | Optional live eval (`eval_run.py --live`, costs money) | score recorded in `BUILD_PLAN.md` |
 

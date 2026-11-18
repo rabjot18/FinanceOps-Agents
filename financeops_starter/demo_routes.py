@@ -75,7 +75,7 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
         if body.run_investigations:
             from agent import Investigator
             client = get_model_client()
-            factory = lambda c: Investigator(c, client)  # noqa: E731
+            factory = lambda c: Investigator(c, client, enforce_budget=True)  # noqa: E731
         result = run_once(fc, SimulatedInbox(db_path), factory)
         return {"simulated_time": fc.clock(), "result": result}
 

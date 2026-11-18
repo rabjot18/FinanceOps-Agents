@@ -20,13 +20,30 @@ from core import _at
 log = logging.getLogger("financeops.orchestrator")
 
 
-def run_cycle(core, has_model=False):
+def run_cycle(core, has_model=False, briefing=None):
     """One orchestration round. has_model: the worker can run investigations
-    (an explicit model client). Returns a summary for logs and tests."""
+    (an explicit model client). briefing: a callable that writes today's owner
+    briefing (BriefingAgent.run), run once a day within the model budget.
+    Returns a summary for logs and tests."""
     result = {"events": apply_events(core), "cadence": run_cadence(core),
-              "judgement": [] if has_model else route_judgement(core)}
+              "judgement": route_judgement(core, has_model)}
     result["autonomy"] = run_autonomy(core)
+    result["briefing"] = None
+    if (briefing is not None and core.briefing_due() and core.model_budget_left_cents() > 0
+            and not core.agent_paused("briefing")):
+        try:
+            done = briefing()
+            result["briefing"] = done["id"] if done else None
+        except Exception:
+            log.exception("briefing failed")
     return result
+
+
+def model_allowed(core):
+    """May an automatic model call start now? With autonomy rules in the
+    policy, only while today's model budget is not spent. Policies without
+    rules keep the Milestone 3 behaviour (an explicit model client decides)."""
+    return not core.budget_enforced() or core.model_budget_left_cents() > 0
 
 
 # --- 1. events ----------------------------------------------------------
@@ -136,16 +153,16 @@ def _cadence_step(core, row, day, policy, job_id):
 
 # --- judgement without a model budget -----------------------------------
 
-def route_judgement(core):
+def route_judgement(core, has_model=False):
     """Investigation jobs need a paid model call. When autonomy is on (the
-    policy has rules), no model client is available and the daily model budget
-    is 0, each waiting job becomes an escalation instead of sitting unseen.
-    Policies without rules keep the Milestone 3 behaviour: jobs wait for an
-    explicit model client. Spending against a non-zero budget is not enforced
-    yet: that arrives with cost tracking in Milestone 5 step 2."""
+    policy has rules) and no call is possible - no model client, or today's
+    model budget is spent - each waiting job becomes an escalation instead of
+    sitting unseen. Policies without rules keep the Milestone 3 behaviour:
+    jobs wait for an explicit model client."""
     policy = core.policy()
-    if (policy is None or not policy["autonomy_rules"]
-            or policy["daily_model_budget_cents"] > 0):
+    if policy is None or not policy["autonomy_rules"]:
+        return []
+    if has_model and model_allowed(core):
         return []
     outcomes = []
     for job in core.investigate_jobs(status="pending"):
@@ -162,8 +179,9 @@ def _escalate_judgement(core, job):
     if core.case(case_id)["state"] == "resolved":
         return False  # resolving already closes waiting investigations
     core.open_escalation(case_id, "needs_judgement",
-                         f"Invoice {job['invoice_id']} needs a judgement call (a customer reply "
-                         "or a partial payment) and the policy allows no automatic model calls. "
+                         f"Invoice {job['invoice_id']} needs a judgement call (a customer reply, "
+                         "a partial payment or a new document) and no automatic model call is "
+                         "possible now (no model client, or today's model budget is spent). "
                          "Review the evidence and decide.", _evidence_ids(core, case_id),
                          "orchestrator", key=job["id"])
     if core.claim_job(job["id"]) is not None:

@@ -159,7 +159,7 @@ class LoadTests(unittest.TestCase):
         policy = self.core.policy()
         self.assertEqual((policy["version"], policy["created_by"]), (1, "generator"))
         self.assertTrue(policy["autonomy_rules"])
-        self.assertEqual(policy["daily_model_budget_cents"], 0)
+        self.assertEqual(policy["daily_model_budget_cents"], 400)  # the owner's USD 4.00 a day
         generator.load(self.core, 28, **SMALL)
         self.assertEqual(self.core.policy()["version"], 1)
 

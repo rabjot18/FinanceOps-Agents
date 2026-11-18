@@ -459,7 +459,7 @@ def load(core, seed, months=6, customers=25):
                 (seed, months, customers, json.dumps(business["truth"]), start))
     if core.policy() is None:
         core.set_policy(60, 7, 2, autonomy_rules=DEFAULT_AUTONOMY_RULES,
-                        cadence_days=DEFAULT_CADENCE_DAYS, daily_model_budget_cents=0,
+                        cadence_days=DEFAULT_CADENCE_DAYS, daily_model_budget_cents=400,
                         created_by="generator")
     for event in business["events"]:
         core.schedule_event(event["kind"], event["payload"], "generator",

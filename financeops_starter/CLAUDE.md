@@ -135,10 +135,23 @@ independently redesign the same interfaces.
   (`agent_controls`) are checked before every automatic execution or agent run.
   `apply_autonomy` re-evaluates, checks the switch, approves and queues in one
   transaction; the worker holds automatically approved messages while paused.
-- Every agent proposal waits for the owner (the agent only sees non-routine
-  cases, and cannot escalate until step 2). Automatic reminders only on clean
-  cases: the contract is the only evidence. New documents or replies stop the
-  cadence until reviewed (`has_unreviewed_evidence`).
+- Agent reminders always wait for the owner. Other agent proposals also wait
+  unless `FINANCEOPS_AGENT_AUTOSEND=1`, which is only switched on after a live
+  evaluation (`eval_run.py --live`) shows no unauthorized actions. Automatic
+  reminders only on clean cases: the contract is the only evidence. New
+  documents or replies stop the cadence until reviewed (`has_unreviewed_evidence`).
+- Agents (step 2): the collections agent can `escalate_to_owner` instead of
+  proposing; a newer automatic plan supersedes older pending ones, and after
+  `MAX_REPLANS` the agent escalates. The briefing agent (`briefing.py`, Haiku
+  5.5) is read-only: one structured-output call over `core.briefing_facts()`.
+- Model spend: every call is recorded in `model_usage` and priced with
+  `core.MODEL_PRICES` (US cents per million tokens; check current prices when
+  adding a model). With autonomy rules on, no automatic model call starts once
+  the policy's `daily_model_budget_cents` (US cents, midnight UTC on the
+  simulated clock) is spent; a running automatic investigation stops and
+  escalates. Owner-started investigations are not stopped but still count.
+  The check runs after each call, so a run can overshoot by about one call.
+  The briefing is tried at most twice a day and only with budget left.
 - An escalation caused by an event is opened in the same transaction that
   marks the event applied. A case paid in full resolves and closes its open
   escalations. Events with equal timestamps apply in stored order.

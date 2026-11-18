@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 import messages
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 ACTION_KINDS = {"collection_reminder", "request_information"}
 # Action status after the owner's step, by stage. "executed_simulated" is the
@@ -32,7 +32,7 @@ ACTION_KINDS = {"collection_reminder", "request_information"}
 _PENDING = ("proposed", "approved")
 _WAITING = ("queued", "dispatched", "executed_simulated")
 _PAST_APPROVAL = ("queued", "dispatched", "follow_up_due", "executed_simulated")
-_CLOSED = ("rejected", "cancelled", "failed")
+_CLOSED = ("rejected", "cancelled", "failed", "superseded")
 # Reminders that count toward the policy limit (sent, or on their way).
 _REMINDER_COUNTED = ("queued", "dispatched", "follow_up_due", "executed_simulated")
 
@@ -98,6 +98,20 @@ EVENT_SPECS = {
     "reply_received": {"evidence_id": str, "invoice_id": str, "body": str},
 }
 EVENT_SOURCES = {"scenario", "generator", "demo", "api", "stripe", "plaid", "csv"}
+# Model prices in US cents per million tokens (Anthropic first-party API,
+# November 2026). Cache writes (5-minute TTL) cost 1.25x input. A model not
+# listed is priced as the most expensive one here, so the budget errs safe.
+MODEL_PRICES = {
+    "claude-opus-5-5": {"input": 400, "output": 2000, "cache_read": 20},
+    "claude-haiku-5-5": {"input": 10, "output": 50, "cache_read": 1},
+}
+CACHE_WRITE_MULTIPLIER = 1.25
+MAX_REPLANS = 2  # superseded agent plans per case before the owner is asked
+# Agent information requests may go out automatically (under the rules) only
+# when this is switched on, after a live evaluation with the real model shows
+# no unauthorized actions. Off by default: the agent still investigates,
+# escalates, replans and briefs on its own; its messages wait for the owner.
+AGENT_MESSAGES_AUTOMATIC = os.environ.get("FINANCEOPS_AGENT_AUTOSEND", "0") == "1"
 _RULE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -289,6 +303,16 @@ _SCHEMA_V4 = [
     "INSERT INTO sim_clock VALUES (1, 0)",
 ]
 
+_SCHEMA_V6 = [
+    # Every model call's tokens, for the daily model budget (Milestone 5 step 2).
+    """CREATE TABLE model_usage (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, model TEXT NOT NULL,
+        ref TEXT, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+        cache_read_tokens INTEGER NOT NULL, cache_write_tokens INTEGER NOT NULL,
+        cost_micro_cents INTEGER NOT NULL, created_at TEXT NOT NULL
+    )""",
+]
+
 _SCHEMA_V5 = [
     # Milestone 5. Due dates drive the reminder cadence.
     "ALTER TABLE invoices ADD COLUMN due_at TEXT",
@@ -442,6 +466,9 @@ class FinanceCore:
                     self.db.execute(statement)
             if current < 5:
                 for statement in _SCHEMA_V5:
+                    self.db.execute(statement)
+            if current < 6:
+                for statement in _SCHEMA_V6:
                     self.db.execute(statement)
             if current < 2:
                 # Backfill cases only once every table the rules read exists.
@@ -628,6 +655,17 @@ class FinanceCore:
                     "payload,payload_hash,rationale) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (action_id, invoice_id, current["version"], kind, refs, "proposed", proposed_by,
                      messages.canonical_json(payload), messages.payload_hash(payload), rationale))
+                if proposed_by.startswith(AUTOMATIC_PROPOSERS):
+                    # A newer automatic plan replaces older ones still waiting.
+                    for old in self.db.execute(
+                            "SELECT id FROM actions WHERE invoice_id=? AND id != ? AND "
+                            "status='proposed' AND (proposed_by='orchestrator' OR "
+                            "proposed_by LIKE 'agent:%')", (invoice_id, action_id)).fetchall():
+                        self.db.execute("UPDATE actions SET status='superseded', superseded_by=? "
+                                        "WHERE id=?", (action_id, old["id"]))
+                        self._activity("action_superseded", proposed_by,
+                                       f"Replaced plan {old['id']} with {action_id}",
+                                       case_id=self.case_id(invoice_id), ref=old["id"])
                 # Code decides autonomy after the proposal is stored; the
                 # proposer (model or orchestrator) never sees or sets it.
                 decision = self._autonomy_for(self.action(action_id))
@@ -1042,7 +1080,10 @@ class FinanceCore:
     def add_agent_usage(self, run_id, input_tokens, output_tokens,
                         cache_read_tokens=0, cache_write_tokens=0, served_model=None):
         with self.transaction():
-            self._running_run(run_id)
+            run = self._running_run(run_id)
+            self._record_model_usage(run["agent"], served_model or run["model"], run_id,
+                                     input_tokens, output_tokens, cache_read_tokens,
+                                     cache_write_tokens)
             self.db.execute(
                 "UPDATE agent_runs SET input_tokens=input_tokens+?, output_tokens=output_tokens+?, "
                 "cache_read_tokens=cache_read_tokens+?, cache_write_tokens=cache_write_tokens+?, "
@@ -1507,13 +1548,14 @@ class FinanceCore:
             return decision("approve", None, f"policy v{policy_version} has no autonomy rules")
         if open_escalations:
             return decision("approve", None, "case has an open escalation")
-        if proposed_by.startswith("agent:"):
-            # The agent only looks at cases that are not routine (a reply, a
-            # partial payment, a new document), and until it can escalate
-            # (Milestone 5 step 2) even its information requests may answer a
-            # dispute the system has not flagged yet. The owner decides.
-            return decision("approve", None, "proposed by the agent on a non-routine case: "
+        if proposed_by.startswith("agent:") and kind == "collection_reminder":
+            # The agent only looks at non-routine cases (a reply, a partial
+            # payment, a new document); chasing after one is the owner's call.
+            return decision("approve", None, "agent proposed a reminder on a non-routine case: "
                                              "the owner decides")
+        if proposed_by.startswith("agent:") and not AGENT_MESSAGES_AUTOMATIC:
+            return decision("approve", None, "agent messages wait for the owner until a live "
+                                             "evaluation passes (FINANCEOPS_AGENT_AUTOSEND)")
         if kind == "collection_reminder" and evidence_count > 1:
             # Replies or documents beyond the original contract can change the
             # story (already paid, promised a date, disputed): no autopilot.
@@ -1716,6 +1758,112 @@ class FinanceCore:
         return {"event": event_id, "kind": event["kind"], "status": status, "detail": detail,
                 "case_id": case_id if known_case else None}
 
+    # --- Milestone 5 step 2: model spend, replans, briefings ------------
+
+    @staticmethod
+    def model_cost_micro_cents(model, input_tokens, output_tokens, cache_read=0, cache_write=0):
+        """Cost in millionths of a US cent (integer, no rounding drift)."""
+        price = MODEL_PRICES.get(model) or max(MODEL_PRICES.values(), key=lambda p: p["output"])
+        return int(input_tokens * price["input"] + output_tokens * price["output"]
+                   + cache_read * price["cache_read"]
+                   + cache_write * price["input"] * CACHE_WRITE_MULTIPLIER)
+
+    def _record_model_usage(self, agent, model, ref, input_tokens, output_tokens,
+                            cache_read=0, cache_write=0):
+        """Inside the caller's transaction: one model call's tokens and cost."""
+        tokens = [int(x or 0) for x in (input_tokens, output_tokens, cache_read, cache_write)]
+        self.db.execute(
+            "INSERT INTO model_usage(agent, model, ref, input_tokens, output_tokens, "
+            "cache_read_tokens, cache_write_tokens, cost_micro_cents, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (agent, model, ref, *tokens, self.model_cost_micro_cents(model, *tokens), self.clock()))
+
+    def record_model_usage(self, agent, model, ref, input_tokens, output_tokens,
+                           cache_read=0, cache_write=0):
+        with self.transaction():
+            self._record_model_usage(agent, model, ref, input_tokens, output_tokens,
+                                     cache_read, cache_write)
+
+    def spend_today_cents(self):
+        """Model spend since midnight UTC on the (simulated) clock, rounded up."""
+        today = _at(self.clock()).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        micro = self.db.execute("SELECT COALESCE(SUM(cost_micro_cents), 0) FROM model_usage "
+                                "WHERE created_at >= ?", (today,)).fetchone()[0]
+        return -(-micro // 1_000_000)
+
+    def budget_enforced(self):
+        """The daily model budget applies when the policy has autonomy rules.
+        Policies without rules keep the Milestone 3 behaviour (an explicit
+        model client decides)."""
+        policy = self.policy()
+        return bool(policy and policy["autonomy_rules"])
+
+    def model_budget_left_cents(self):
+        """What the policy still allows today for automatic model calls (0 = none)."""
+        policy = self.policy()
+        budget = policy["daily_model_budget_cents"] if policy else 0
+        return max(budget - self.spend_today_cents(), 0)
+
+    def replans(self, invoice_id):
+        """Automatic plans on this case that a newer plan replaced."""
+        version = self.invoice(invoice_id)["version"]  # new evidence or payment resets it
+        return self.db.execute("SELECT COUNT(*) FROM actions WHERE invoice_id=? AND version=? "
+                               "AND status='superseded' AND proposed_by LIKE 'agent:%'",
+                               (invoice_id, version)).fetchone()[0]
+
+    def briefing_due(self):
+        """True when no briefing exists for today's (simulated) date and fewer
+        than 2 attempts were made today (a failing call is not retried all day)."""
+        now = _at(self.clock())
+        today = now.date().isoformat()
+        latest = self.db.execute("SELECT MAX(period_end) FROM briefings").fetchone()[0]
+        if latest is not None and _at(latest).date().isoformat() >= today:
+            return False
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        attempts = self.db.execute("SELECT COUNT(*) FROM model_usage WHERE agent='briefing' "
+                                   "AND created_at >= ?", (midnight,)).fetchone()[0]
+        return attempts < 2
+
+    def briefing_facts(self):
+        """The facts the briefing agent may describe, computed by code."""
+        now = self.clock()
+        since = _later(now, days=-1)
+        summary = self.summary()
+        attention = self.attention()
+        counts = {r["kind"]: r["n"] for r in self.db.execute(
+            "SELECT kind, COUNT(*) AS n FROM activity WHERE created_at >= ? GROUP BY kind",
+            (since,))}
+        overdue = sorted((r for r in self.cases() if r["days_overdue"] is not None
+                          and r["state"] != "resolved"),
+                         key=lambda r: -r["days_overdue"])[:5]
+        return {
+            "period_start": since, "period_end": now, "currency": "CAD",
+            "summary": {k: summary[k] for k in ("outstanding_cents", "overdue_cents", "open_cases",
+                                                "overdue_cases", "awaiting_owner",
+                                                "auto_handled_7d", "resolved_7d")},
+            "last_24h": counts,
+            "needs_owner": [
+                {"case_id": a["case_id"], "kind": a["action"]["kind"],
+                 "outstanding_cents": a["outstanding_cents"]} for a in attention["approvals"]
+            ] + [
+                {"case_id": e["escalation"]["case_id"], "reason": e["escalation"]["reason"],
+                 "outstanding_cents": e["outstanding_cents"]} for e in attention["escalations"]],
+            "most_overdue": [{"case_id": r["id"], "days_overdue": r["days_overdue"],
+                              "outstanding_cents": r["outstanding_cents"]} for r in overdue],
+        }
+
+    def store_briefing(self, period_start, period_end, headline, sections, run_ref=None):
+        briefing_id = f"brief-{uuid.uuid4().hex[:16]}"
+        with self.transaction():
+            self.db.execute(
+                "INSERT INTO briefings(id, run_id, period_start, period_end, headline, sections, "
+                "created_at) VALUES(?,?,?,?,?,?,?)",
+                (briefing_id, run_ref, period_start, period_end, headline[:300],
+                 json.dumps(sections), self.clock()))
+            self._activity("briefing_published", "agent:briefing",
+                           "Owner briefing published for the last 24 hours", ref=briefing_id)
+        return self.latest_briefing()
+
     # --- Milestone 5: activity, autonomy switch, escalations, agents -----
 
     def _activity(self, kind, actor, summary, case_id=None, ref=None, synthetic=True):
@@ -1852,7 +2000,7 @@ class FinanceCore:
                 "resolved_7d": self.db.execute(
                     "SELECT COUNT(*) FROM case_verifications WHERE verified_at >= ?",
                     (week_ago,)).fetchone()[0],
-                "model_spend_today_cents": None,  # cost tracking arrives with the agent work
+                "model_spend_today_cents": self.spend_today_cents(),
                 "autonomy_paused": self.autonomy_status()["paused"],
                 "now": now,
                 "simulated_time": self.simulated_time,

@@ -207,7 +207,7 @@ class AttentionTests(Milestone5TestCase):
         summary = self.call("GET", "/summary")
         self.assertEqual((summary["outstanding_cents"], summary["open_cases"],
                           summary["resolved_7d"], summary["model_spend_today_cents"]),
-                         (60_000, 1, 0, None))
+                         (60_000, 1, 0, 0))
         self.assertTrue(summary["simulated_time"])
 
 
@@ -279,7 +279,8 @@ class MigrationV5Tests(unittest.TestCase):
                 for sql in (
                     *(f"DROP TABLE {t}" for t in ("events", "activity", "escalations",
                                                    "autonomy_state", "agent_controls", "briefings",
-                                                   "sim_playback", "generator_runs")),
+                                                   "sim_playback", "generator_runs",
+                                                   "model_usage")),
                     "ALTER TABLE invoices DROP COLUMN due_at",
                     "ALTER TABLE actions DROP COLUMN autonomy",
                     "ALTER TABLE actions DROP COLUMN superseded_by",

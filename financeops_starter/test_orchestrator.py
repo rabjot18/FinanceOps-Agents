@@ -7,6 +7,7 @@ Run: .venv/bin/python -m unittest test_orchestrator -v
 import tempfile
 import unittest
 from datetime import timedelta
+from unittest import mock
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -206,6 +207,7 @@ class EscalationTests(OrchestratorTestCase):
                          ["needs_judgement"])
 
     def test_with_a_model_client_judgement_jobs_wait_for_the_agent(self):
+        self.core.set_policy(60, 7, 2, daily_model_budget_cents=400, created_by="test")
         self.business(due_days_ago=0)
         self.event("reply_received", "g-1:reply", evidence_id="g-1-r1", invoice_id="g-1",
                    body="We will pay next week.")
@@ -214,6 +216,7 @@ class EscalationTests(OrchestratorTestCase):
         self.assertEqual(len(self.core.investigate_jobs("g-1", status="pending")), 1)
 
     def test_a_paused_agent_is_not_run(self):
+        self.core.set_policy(60, 7, 2, daily_model_budget_cents=400, created_by="test")
         self.business(due_days_ago=0)
         self.event("reply_received", "g-1:reply", evidence_id="g-1-r1", invoice_id="g-1",
                    body="We will pay next week.")
@@ -253,17 +256,33 @@ class ReviewFindingTests(OrchestratorTestCase):
         self.assertEqual(self.core.action_detail("auto-g-1-d3")["autonomy"]["reasons"],
                          ["invoice disputed"])
 
-    def test_every_agent_proposal_waits_for_the_owner(self):
+    def test_agent_reminders_wait_but_agent_questions_follow_the_rules(self):
         self.business(due_days_ago=0)
         self.round()
         self.core.propose("agent-r", "g-1", "collection_reminder", ["g-1-c"], proposed_by="agent:run-1")
-        self.core.propose("agent-q", "g-1", "request_information", ["g-1-c"], proposed_by="agent:run-1")
-        for action_id in ("agent-r", "agent-q"):
-            self.assertEqual(self.core.action_detail(action_id)["autonomy"]["mode"], "approve")
+        self.assertEqual(self.core.action_detail("agent-r")["autonomy"]["mode"], "approve")
+        with mock.patch("core.AGENT_MESSAGES_AUTOMATIC", True):
+            self.core.propose("agent-q", "g-1", "request_information", ["g-1-c"],
+                              proposed_by="agent:run-2")
+            self.assertEqual(self.core.action_detail("agent-q")["autonomy"]["mode"], "auto")
+        # The newer plan replaced the older one; nothing is deleted.
+        old = self.core.action_detail("agent-r")
+        self.assertEqual((old["status"], old["superseded_by"]), ("superseded", "agent-q"))
+        self.assertEqual(self.core.replans("g-1"), 1)
+        with mock.patch("core.AGENT_MESSAGES_AUTOMATIC", True):
+            self.round()
+        self.assertEqual(self.core.action("agent-q")["status"], "dispatched")
+        self.assertIn("action_superseded", self.activity_kinds())
+
+    def test_agent_messages_wait_for_the_owner_by_default(self):
+        self.business(due_days_ago=0)
         self.round()
-        self.assertEqual(self.core.action("agent-r")["status"], "proposed")
-        self.assertEqual(self.core.action("agent-q")["status"], "proposed")
-        self.assertEqual(self.inbox.messages(), [])
+        self.core.propose("agent-q", "g-1", "request_information", ["g-1-c"],
+                          proposed_by="agent:run-1")
+        self.round()
+        detail = self.core.action_detail("agent-q")
+        self.assertEqual((detail["status"], detail["autonomy"]["mode"]), ("proposed", "approve"))
+        self.assertIn("FINANCEOPS_AGENT_AUTOSEND", detail["autonomy"]["reasons"][0])
 
     def test_reminders_on_a_case_with_extra_documents_wait_for_the_owner(self):
         self.business(due_days_ago=0)
