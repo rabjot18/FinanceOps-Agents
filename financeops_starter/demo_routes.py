@@ -19,7 +19,7 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
     """core: the per-request FinanceCore dependency; require_owner(authorization)
     raises unless the owner token matches; get_model_client() returns the model client."""
     # Imported here: api.py imports this module, and the request models live there.
-    from api import (ClockIn, ContactIn, DisputeIn, EvidenceIn, GeneratorIn, InvoiceIn,
+    from api import (ClockIn, ContactIn, DemoRunIn, DisputeIn, EvidenceIn, GeneratorIn, InvoiceIn,
                      SettlementIn, WorkerRunIn, _invoice_out)
 
     demo = APIRouter(prefix="/demo", tags=["demo: synthetic events"])
@@ -112,5 +112,13 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
         """The planted problems and their expected outcomes, for evaluation."""
         # NotFound (404) for a seed that was never generated.
         return generator.truth(fc, seed)
+
+    # --- Milestone 6: one button runs a reactive business ----------------
+
+    @demo.post("/run", response_model=schemas.DemoRunOut)
+    def demo_run(body: DemoRunIn, fc: FinanceCore = Depends(core)):
+        """Load a reactive synthetic business (simulated customers answer what the
+        agents actually send) and start playback. The worker loop does the rest."""
+        return generator.load_reactive(fc, body.seed, body.customers, body.months, body.speed)
 
     return demo

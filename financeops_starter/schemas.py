@@ -1,4 +1,4 @@
-"""Response shapes of the HTTP API (Milestones 4-5): the frozen contract.
+"""Response shapes of the HTTP API (Milestones 4-6): the frozen contract.
 
 The frontend's TypeScript types are generated from the OpenAPI document these
 models produce (contracts/openapi.json). extra="forbid" means a field that
@@ -21,7 +21,8 @@ ActionStatus = Literal["proposed", "approved", "rejected", "queued", "dispatched
                        "superseded"]
 DeliveryStatus = Literal["pending", "sending", "unknown", "sent", "failed", "cancelled"]
 RunStatus = Literal["running", "proposed", "no_proposal", "escalated", "failed"]
-AgentName = Literal["collections", "briefing"]
+# "disputes" (Milestone 6): reviews disputed invoices and recommends a decision.
+AgentName = Literal["collections", "disputes", "briefing"]
 AutonomyMode = Literal["auto", "approve", "blocked"]
 JobKind = Literal["settlement_check", "investigate", "cadence_step", "briefing"]
 # Who moved a case last: the owner, a policy rule (automatic), or nobody yet.
@@ -159,6 +160,9 @@ class MessagePayload(_Out):
     currency: str
     evidence_ids: List[str]
     policy_version: Optional[int]
+    # Milestone 6: "agent" = the collections agent wrote the text (checked by
+    # code, facts appended by code); "code" = a template. None: older payloads.
+    written_by: Optional[Literal["code", "agent"]] = None
 
 
 class Approval(_Out):
@@ -333,6 +337,8 @@ class EscalationOut(_Out):
     resolved_at: Optional[str]
     resolved_by: Optional[str]
     resolution_note: Optional[str]
+    # Milestone 6: what the agent suggests the owner decides (model text: plain text only).
+    recommendation: Optional[str] = None
 
 
 class AttentionApproval(_Out):
@@ -363,7 +369,9 @@ ActivityKind = Literal[
     "message_sent", "message_cancelled", "agent_run_started", "agent_run_finished",
     "escalation_opened", "escalation_resolved", "briefing_published",
     "autonomy_paused", "autonomy_resumed", "agent_paused", "agent_resumed",
-    "policy_changed"]
+    "policy_changed",
+    # Milestone 6
+    "followup_scheduled", "customer_simulated", "handoff", "spend_cap_reached"]
 
 
 class ActivityItem(_Out):
@@ -392,7 +400,14 @@ class SummaryOut(_Out):
     awaiting_owner: int  # approvals plus open escalations
     auto_handled_7d: int  # actions approved by a policy rule in the last 7 days
     resolved_7d: int
-    model_spend_today_cents: Optional[int]  # None until cost tracking exists
+    model_spend_today_cents: Optional[int]  # None until cost tracking exists (simulated day)
+    # Milestone 6: hard caps on real money, by the real calendar day (local
+    # midnight) and in total. Fixed by the server's environment, not by policy.
+    spend_real_today_cents: int = 0
+    spend_total_cents: int = 0
+    daily_cap_cents: int = 0
+    total_cap_cents: int = 0
+    model_calls_allowed: bool = True  # False once either cap is reached
     autonomy_paused: bool
     now: str
     simulated_time: bool
@@ -553,3 +568,114 @@ class TruthItem(_Out):
 class TruthOut(_Out):
     seed: int
     items: List[TruthItem]
+
+
+# --- Milestone 6: the flow (stages, agents, handoffs) and outcomes -------
+
+FlowStage = Literal["issued", "monitoring", "overdue", "contacted", "customer_replied",
+                    "payment_received", "closed_verified", "needs_you", "disputed"]
+# Who moved a case into a stage. "rules": routine code (orchestrator or a policy
+# rule); "verifier": code that closes a case only when settlements prove it.
+FlowActor = Literal["intake", "rules", "collections", "disputes", "customer",
+                    "verifier", "owner", "stripe"]
+
+
+class FlowStep(_Out):
+    seq: int
+    case_id: str
+    stage: FlowStage
+    actor: FlowActor
+    summary: str  # written by code from stored facts
+    ref: Optional[str]  # the action, event, escalation or run behind the step
+    created_at: str
+
+
+class FlowStageOut(_Out):
+    id: FlowStage
+    label: str
+    count: int  # cases currently in this stage
+
+
+class FlowCase(_Out):
+    case_id: str
+    invoice_id: str
+    customer: str
+    stage: FlowStage
+    actor: FlowActor  # who moved it into its current stage
+    total_cents: int
+    outstanding_cents: int
+    currency: str
+    needs_owner: bool
+    updated_at: str
+
+
+class FlowOut(_Out):
+    """Every case's current stage, from recorded steps only (never animated guesses)."""
+    stages: List[FlowStageOut]  # in display order
+    cases: List[FlowCase]
+    recent: List[FlowStep]  # the latest steps, oldest first (at most 50)
+    cursor: int  # highest step seq
+    now: str
+    simulated_time: bool
+
+
+class CaseFlowOut(_Out):
+    case_id: str
+    invoice_id: str
+    customer: str
+    stage: FlowStage
+    steps: List[FlowStep]  # oldest first
+
+
+class SpendOut(_Out):
+    real_today_cents: int  # since local midnight, real clock
+    total_cents: int
+    daily_cap_cents: int
+    total_cap_cents: int
+    model_calls_allowed: bool
+
+
+class PersonaResult(_Out):
+    """One simulated customer: its hidden persona (shown only in outcomes) and how it went."""
+    case_id: str
+    invoice_id: str
+    customer: str
+    persona: str
+    expected: str  # code-written: what good handling looks like
+    stage: FlowStage
+    outcome: str  # code-written summary of what happened
+    correct: Optional[bool]  # None while the case is still in progress
+
+
+class OutcomesOut(_Out):
+    """Results of the run, computed by the backend from stored facts."""
+    currency: str
+    invoiced_cents: int
+    collected_cents: int
+    outstanding_cents: int
+    cases_total: int
+    cases_closed: int
+    closed_without_owner: int  # resolved with no owner approval or resolution
+    owner_decisions: int  # approvals, rejections and escalations the owner handled
+    open_for_owner: int  # waiting for the owner right now
+    messages_sent: int
+    messages_written_by_agents: int
+    followups_scheduled: int
+    agent_runs: int
+    avg_days_to_pay: Optional[float]  # due date to full settlement, closed cases only
+    unauthorized_actions: int  # must be 0
+    spend: SpendOut
+    personas: List[PersonaResult]  # empty when no reactive business is loaded
+    narrative: Optional[BriefingOut]  # the reporter's latest briefing, if any
+    now: str
+    simulated_time: bool
+
+
+class DemoRunOut(_Out):
+    seed: int
+    customers: int
+    months: int
+    invoices: int
+    playing: bool
+    speed: int  # simulated minutes per real second
+    simulated: bool = True
