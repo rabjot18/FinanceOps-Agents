@@ -1654,10 +1654,12 @@ class FinanceCore:
             # story (already paid, promised a date, disputed): no autopilot.
             return decision("approve", None, "the case has replies or documents beyond the "
                                              "contract: the owner decides")
+        over_limit = None
         for rule in rules:
             if rule["action_kind"] != kind:
                 continue
             if rule["max_amount_cents"] is not None and amount_cents > rule["max_amount_cents"]:
+                over_limit = over_limit or rule
                 continue
             if rule["require_undisputed"] and invoice["disputed"]:
                 continue
@@ -1667,6 +1669,11 @@ class FinanceCore:
             return decision(rule["mode"], rule["id"], reason)
         if invoice["disputed"]:
             return decision("approve", None, "invoice disputed")
+        if over_limit is not None:
+            return decision("approve", None,
+                            f"{self._cad(amount_cents)} is over the automatic limit of "
+                            f"{self._cad(over_limit['max_amount_cents'])} "
+                            f"(rule {over_limit['id']}): the owner decides")
         return decision("approve", None, "no autonomy rule matched")
 
     def _autonomy_for(self, action):
@@ -2005,9 +2012,11 @@ class FinanceCore:
             for r in closed:
                 proof = self.db.execute("SELECT verified_at FROM case_verifications WHERE "
                                         "case_id=? ORDER BY seq DESC LIMIT 1", (r["id"],)).fetchone()
-                if proof and r["due_at"]:
-                    days.append((_at(proof["verified_at"]) - _at(r["due_at"])).total_seconds()
-                                / 86400)
+                created = self.db.execute("SELECT created_at FROM cases WHERE id=?",
+                                          (r["id"],)).fetchone()
+                if proof and created:  # invoice issued -> paid in full
+                    days.append((_at(proof["verified_at"]) - _at(created["created_at"]))
+                                .total_seconds() / 86400)
             owner_decisions = (
                 self.db.execute("SELECT COUNT(*) FROM approvals WHERE decided_by='owner'")
                 .fetchone()[0]

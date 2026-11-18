@@ -662,7 +662,7 @@ class OutcomesOut(_Out):
     messages_written_by_agents: int
     followups_scheduled: int
     agent_runs: int
-    avg_days_to_pay: Optional[float]  # due date to full settlement, closed cases only
+    avg_days_to_pay: Optional[float]  # invoice issued to paid in full, closed cases only
     unauthorized_actions: int  # must be 0
     spend: SpendOut
     personas: List[PersonaResult]  # empty when no reactive business is loaded

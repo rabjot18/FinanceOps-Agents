@@ -85,7 +85,9 @@ class RoutineReminderTests(OrchestratorTestCase):
         self.assertEqual(self.inbox.messages(), [])
         queue = self.core.attention()["approvals"]
         self.assertEqual([a["action"]["id"] for a in queue], ["auto-g-1-d3"])
-        self.assertEqual(queue[0]["action"]["autonomy"]["reasons"], ["no autonomy rule matched"])
+        self.assertEqual(queue[0]["action"]["autonomy"]["reasons"],
+                         ["CAD 6,000.00 is over the automatic limit of CAD 5,000.00 "
+                          "(rule reminder-small): the owner decides"])
 
     def test_a_fast_replay_sends_one_reminder_not_a_burst(self):
         self.business(due_days_ago=20)  # days 3, 7 and 14 have all passed

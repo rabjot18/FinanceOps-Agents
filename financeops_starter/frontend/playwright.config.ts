@@ -15,7 +15,12 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${port}`,
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // PLAYWRIGHT_CHANNEL=msedge (or chrome) uses an installed browser instead of
+  // Playwright's download, e.g. behind a corporate proxy that blocks it.
+  projects: [{
+    name: 'chromium',
+    use: { ...devices['Desktop Chrome'], channel: process.env.PLAYWRIGHT_CHANNEL || undefined },
+  }],
   webServer: {
     // Cross-platform launcher (Windows, macOS, Linux): fresh temp DB, demo routes on,
     // throwaway owner token, uvicorn from ../.venv (Scripts\ on Windows, bin/ elsewhere).
