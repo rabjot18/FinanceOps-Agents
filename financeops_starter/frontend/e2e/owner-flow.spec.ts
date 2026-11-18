@@ -11,11 +11,27 @@ async function signIn(page: Page) {
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'FinanceOps owner console' })).toBeVisible();
   await expect(page.getByText('Synthetic data · simulated delivery · no real money moves')).toBeVisible();
+  // Milestone 6: the default page is the Flow board.
+  await expect(page.getByRole('heading', { level: 2, name: 'Flow' })).toBeVisible();
 }
 
+/** Opens a page from the main nav; the full console sits under the collapsed "Advanced" group. */
 async function go(page: Page, link: string) {
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: new RegExp(link) }).click();
+  const nav = page.getByRole('navigation', { name: 'Main' });
+  const target = nav.getByRole('link', { name: new RegExp(link) });
+  if (!(await target.isVisible())) await nav.getByRole('button', { name: /Advanced/ }).click();
+  await target.click();
 }
+
+test('the three primary pages load: Flow, Your decisions, Outcomes', async ({ page }) => {
+  await signIn(page);
+  await go(page, 'Your decisions');
+  await expect(page.getByRole('heading', { level: 2, name: 'Your decisions' })).toBeVisible();
+  await go(page, 'Outcomes');
+  await expect(page.getByRole('heading', { level: 2, name: 'Outcomes' })).toBeVisible();
+  await go(page, 'Flow');
+  await expect(page.getByRole('heading', { level: 2, name: 'Flow' })).toBeVisible();
+});
 
 test('owner approves and queues a reminder that reaches the simulated inbox', async ({ page }) => {
   await signIn(page);

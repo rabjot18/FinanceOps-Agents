@@ -9,10 +9,15 @@ import type {
   Attention,
   AutonomyStatus,
   Briefing,
+  CaseFlowOut,
   CaseListOut,
   Clock,
   Escalation,
+  FlowCase,
+  FlowOut,
+  FlowStep,
   Inbox,
+  OutcomesOut,
   Policy,
   ScenarioList,
   Summary,
@@ -232,6 +237,11 @@ export const summary: Summary = {
   auto_handled_7d: 7,
   resolved_7d: 2,
   model_spend_today_cents: null,
+  spend_real_today_cents: 120,
+  daily_cap_cents: 450,
+  spend_total_cents: 310,
+  total_cap_cents: 2500,
+  model_calls_allowed: true,
   autonomy_paused: false,
   now: '2026-11-16T10:00:00Z',
   simulated_time: true,
@@ -374,6 +384,8 @@ export function shellRoutes() {
     'GET /activity': { body: activity([]) },
     'GET /autonomy': { body: autonomyOn },
     'GET /briefings/latest': notFound,
+    'GET /flow': { body: emptyFlow },
+    'GET /outcomes': { body: outcomes({ cases_total: 0, personas: [], narrative: null }) },
   };
 }
 
@@ -381,4 +393,169 @@ export function shellRoutes() {
 export function signedInAt(path = '/') {
   sessionStorage.setItem('financeops.ownerToken', TOKEN);
   window.location.hash = `#${path}`;
+}
+
+// --- Milestone 6: flow board, outcomes, spend caps -------------------------
+
+const STAGES: FlowOut['stages'] = [
+  { id: 'issued', label: 'Issued', count: 0 },
+  { id: 'monitoring', label: 'Monitoring', count: 1 },
+  { id: 'overdue', label: 'Overdue', count: 0 },
+  { id: 'contacted', label: 'Contacted', count: 7 },
+  { id: 'customer_replied', label: 'Customer replied', count: 0 },
+  { id: 'payment_received', label: 'Payment received', count: 0 },
+  { id: 'closed_verified', label: 'Closed · verified', count: 1 },
+  { id: 'needs_you', label: 'Needs you', count: 1 },
+  { id: 'disputed', label: 'Disputed', count: 0 },
+];
+
+export function flowCase(n: number, overrides: Partial<FlowCase> = {}): FlowCase {
+  return {
+    case_id: `case-INV-${n}`,
+    invoice_id: `INV-${n}`,
+    customer: `Customer ${n} (synthetic)`,
+    currency: 'CAD',
+    outstanding_cents: 100000 + n,
+    total_cents: 100000 + n,
+    stage: 'contacted',
+    actor: 'collections',
+    needs_owner: false,
+    updated_at: `2026-11-16T09:${String(10 + (n % 50)).padStart(2, '0')}:00Z`,
+    ...overrides,
+  };
+}
+
+export function flowStep(seq: number, overrides: Partial<FlowStep> = {}): FlowStep {
+  return {
+    seq,
+    case_id: 'case-INV-1001',
+    stage: 'contacted',
+    actor: 'collections',
+    ref: null,
+    summary: `Step ${seq}`,
+    created_at: '2026-11-16T09:55:00Z',
+    ...overrides,
+  };
+}
+
+/** Ten cases: Maple in Contacted (with six others), one monitoring, one closed, one needs you. */
+export function flowOut(overrides: Partial<FlowOut> = {}): FlowOut {
+  return {
+    now: '2026-11-16T10:00:00Z',
+    simulated_time: true,
+    cursor: 12,
+    stages: STAGES,
+    cases: [
+      flowCase(1001, { customer: 'Maple Synthetic Ltd', outstanding_cents: 125000, updated_at: '2026-11-16T09:59:00Z' }),
+      ...[2, 3, 4, 5, 6, 7].map((n) => flowCase(n)),
+      flowCase(8, { stage: 'monitoring', actor: 'intake', customer: 'Birch Synthetic Co' }),
+      flowCase(9, { stage: 'closed_verified', actor: 'verifier', customer: 'Aspen Synthetic', outstanding_cents: 0 }),
+      flowCase(2002, { stage: 'needs_you', actor: 'collections', customer: 'Cedar Synthetic Inc', needs_owner: true }),
+    ],
+    recent: [
+      flowStep(10, { stage: 'monitoring', actor: 'intake', case_id: 'case-INV-8', summary: 'Invoice INV-8 opened' }),
+      flowStep(11, { stage: 'contacted', actor: 'collections', ref: 'act-1', summary: 'Reminder sent to Maple' }),
+      flowStep(12, { stage: 'closed_verified', actor: 'verifier', case_id: 'case-INV-9', summary: 'Payment verified for Aspen' }),
+    ],
+    ...overrides,
+  };
+}
+
+export const emptyFlow: FlowOut = {
+  now: '2026-11-16T10:00:00Z',
+  simulated_time: true,
+  cursor: 0,
+  stages: STAGES.map((s) => ({ ...s, count: 0 })),
+  cases: [],
+  recent: [],
+};
+
+export const caseFlow: CaseFlowOut = {
+  case_id: 'case-INV-1001',
+  invoice_id: 'INV-1001',
+  customer: 'Maple Synthetic Ltd',
+  stage: 'customer_replied',
+  steps: [
+    flowStep(1, { stage: 'issued', actor: 'intake', summary: 'Invoice INV-1001 issued' }),
+    flowStep(2, { stage: 'overdue', actor: 'rules', summary: 'Invoice is 6 days overdue' }),
+    flowStep(3, { stage: 'contacted', actor: 'collections', ref: 'act-1', summary: 'Reminder sent' }),
+    flowStep(4, { stage: 'customer_replied', actor: 'customer', ref: 'ev-1', summary: 'Customer replied' }),
+  ],
+};
+
+export const agentWrittenAction: Action = {
+  ...proposedAction,
+  status: 'executed_simulated',
+  proposed_by: 'agent:collections',
+  payload: {
+    ...(proposedAction.payload as NonNullable<Action['payload']>),
+    subject: 'A friendly note about INV-1001',
+    body: 'Hi Maple team, a quick note: INV-1001 is now 6 days past due.',
+    written_by: 'agent',
+  },
+};
+
+export function outcomes(overrides: Partial<OutcomesOut> = {}): OutcomesOut {
+  return {
+    now: '2026-11-30T10:00:00Z',
+    simulated_time: true,
+    currency: 'CAD',
+    cases_total: 10,
+    cases_closed: 7,
+    closed_without_owner: 6,
+    owner_decisions: 2,
+    open_for_owner: 1,
+    collected_cents: 1830000,
+    invoiced_cents: 2500000,
+    outstanding_cents: 670000,
+    avg_days_to_pay: 4.25,
+    unauthorized_actions: 0,
+    messages_sent: 14,
+    messages_written_by_agents: 9,
+    followups_scheduled: 5,
+    agent_runs: 11,
+    spend: { real_today_cents: 120, daily_cap_cents: 450, total_cents: 310, total_cap_cents: 2500, model_calls_allowed: true },
+    narrative: {
+      id: 'brf-9',
+      created_at: '2026-11-30T09:00:00Z',
+      period_start: '2026-11-01T00:00:00Z',
+      period_end: '2026-11-30T00:00:00Z',
+      run_id: null,
+      headline: 'Seven of ten customers paid; one dispute <b>needs</b> you.',
+      sections: [{ title: 'What went well', items: [{ text: 'Reminders went out on time', case_ids: [], evidence_ids: [] }] }],
+    },
+    personas: [
+      {
+        case_id: 'case-INV-1001',
+        invoice_id: 'INV-1001',
+        customer: 'Maple Synthetic Ltd',
+        persona: 'Forgetful payer',
+        expected: 'One reminder, then pays',
+        stage: 'closed_verified',
+        outcome: 'Paid after one reminder',
+        correct: true,
+      },
+      {
+        case_id: 'case-INV-2002',
+        invoice_id: 'INV-2002',
+        customer: 'Cedar Synthetic Inc',
+        persona: 'Disputes delivery',
+        expected: 'Escalate to the owner',
+        stage: 'needs_you',
+        outcome: 'Waiting for the owner',
+        correct: null,
+      },
+      {
+        case_id: 'case-INV-3003',
+        invoice_id: 'INV-3003',
+        customer: 'Birch Synthetic Co',
+        persona: 'Never pays',
+        expected: 'Escalate after the cadence',
+        stage: 'contacted',
+        outcome: 'Still reminding',
+        correct: false,
+      },
+    ],
+    ...overrides,
+  };
 }

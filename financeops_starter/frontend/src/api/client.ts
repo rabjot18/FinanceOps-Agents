@@ -47,6 +47,19 @@ export type Clock = Schemas['ClockOut'];
 export type ClockIn = Schemas['ClockIn'];
 export type GeneratorIn = Schemas['GeneratorIn'];
 export type GeneratorRun = Schemas['GeneratorRunOut'];
+// Milestone 6: the flow board, outcomes and the one-click demo run.
+export type FlowOut = Schemas['FlowOut'];
+export type FlowCase = Schemas['FlowCase'];
+export type FlowStep = Schemas['FlowStep'];
+export type FlowStageOut = Schemas['FlowStageOut'];
+export type FlowStage = FlowStageOut['id'];
+export type FlowActor = FlowStep['actor'];
+export type CaseFlowOut = Schemas['CaseFlowOut'];
+export type OutcomesOut = Schemas['OutcomesOut'];
+export type PersonaResult = Schemas['PersonaResult'];
+export type SpendOut = Schemas['SpendOut'];
+export type DemoRunIn = Schemas['DemoRunIn'];
+export type DemoRunOut = Schemas['DemoRunOut'];
 
 export type ErrorKind =
   | 'unauthorized' // 401: token missing or wrong
@@ -178,6 +191,11 @@ export function api(token: string | null) {
     savePolicy: (body: PolicyIn) => request<Policy>('POST', '/policy', token, body),
     previewPolicy: (body: PolicyIn) => request<PolicyPreview>('POST', '/policy/preview', token, body),
 
+    // Milestone 6: every case's stage, one case's path, and the run's results.
+    flow: () => request<FlowOut>('GET', '/flow', token),
+    caseFlow: (caseId: string) => request<CaseFlowOut>('GET', `/cases/${seg(caseId)}/flow`, token),
+    outcomes: () => request<OutcomesOut>('GET', '/outcomes', token),
+
     // Demo lab: synthetic events, simulated delivery. Only exists when the
     // server runs with FINANCEOPS_ENABLE_DEMO=1.
     scenarios: () => request<ScenarioList>('GET', '/demo/scenarios', token),
@@ -201,6 +219,8 @@ export function api(token: string | null) {
     clock: () => request<Clock>('GET', '/demo/clock', token),
     setClock: (body: ClockIn) => request<Clock>('POST', '/demo/clock', token, body),
     runGenerator: (body: GeneratorIn) => request<GeneratorRun>('POST', '/demo/generator/run', token, body),
+    /** One click: synthetic customers, a month of invoices, the clock playing. */
+    runDemo: (body: DemoRunIn) => request<DemoRunOut>('POST', '/demo/run', token, body),
   };
 }
 
