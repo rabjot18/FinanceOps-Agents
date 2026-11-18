@@ -502,8 +502,9 @@ def generate_reactive(seed, customers=10, months=1, start=None):
         for index, (customer, persona) in enumerate(zip(people, personas)):
             number += 1
             invoice_id = f"INV-R{seed}-{number:04d}"
-            day = month * 30 + rng.randrange(0, 2)
-            minute = 9 * 60 + index * 7
+            # The first month starts right away (minutes apart), so the demo moves at once.
+            day = month * 30
+            minute = 2 + index * 5
             terms = rng.choice(REACTIVE_TERMS_DAYS)
             total = _amount(rng, customer["service"])
             if index == large:
