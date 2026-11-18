@@ -1,8 +1,9 @@
 // The Flow board: every case as a chip in the stage the backend says it is
-// in, and on each edge the actor who moves cases there. Polled; edges whose
-// target stage got a new step since the last poll animate. Nothing here
+// in, and on each edge the actor who moves cases there. Polled; edges are
+// coloured by the stage they lead into, and an edge whose target stage got new
+// steps lights up (glow, flowing dots, "+N") and fades out over HOT_MS. Nothing here
 // decides a stage, an amount or who acted: it all comes from GET /flow.
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Background,
@@ -52,7 +53,7 @@ import { Ago, Avatar, ErrorBox, NotBuiltNotice, PlainText, SimulatedTag, Skeleto
 // --- layout ------------------------------------------------------------------
 
 const NODE_W = 176;
-const GAP = 66;
+const GAP = 108; // room for a visible arrow plus its actor label
 const SIDE_Y = 360; // below the tallest main-row node (header + CHIP_MAX chips + "more")
 const CHIP_MAX = 4;
 const HANDLE_TOP = 34; // edges leave and enter at the header row, so the main row stays straight
@@ -95,6 +96,70 @@ function useFresh(flow: FlowOut | undefined, updatedAt: number): Fresh {
   return fresh;
 }
 
+/**
+ * How "hot" each stage's incoming edge is: steps that arrived in the last HOT_MS
+ * keep the edge lit (fading out), so a move stays visible for several seconds
+ * instead of one poll. Display only: it counts steps the backend returned.
+ */
+const HOT_MS = 9000;
+interface Heat {
+  count: number; // steps into the stage within the window
+  level: number; // 1 = just now, fading to 0
+}
+type HeatMap = ReadonlyMap<FlowStage, Heat>;
+
+function useHeat(flow: FlowOut | undefined, updatedAt: number): HeatMap {
+  const lastSeq = useRef<number | null>(null);
+  const [events, setEvents] = useState<{ stage: FlowStage; at: number }[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!flow) return;
+    const prev = lastSeq.current;
+    const top = flow.recent.reduce((m, s) => Math.max(m, s.seq), 0);
+    if (prev !== null) {
+      const newer = flow.recent.filter((s) => s.seq > prev);
+      if (newer.length) {
+        const at = Date.now();
+        setNow(at);
+        setEvents((old) => [...old.filter((e) => at - e.at < HOT_MS), ...newer.map((s) => ({ stage: s.stage, at }))]);
+      }
+    }
+    lastSeq.current = Math.max(prev ?? 0, top);
+  }, [flow, updatedAt]);
+  const active = events.length > 0;
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      setEvents((old) => {
+        const kept = old.filter((e) => t - e.at < HOT_MS);
+        return kept.length === old.length ? old : kept;
+      });
+    }, 500);
+    return () => clearInterval(timer);
+  }, [active]);
+  return useMemo(() => {
+    const map = new Map<FlowStage, Heat>();
+    for (const e of events) {
+      const level = Math.max(0, 1 - (now - e.at) / HOT_MS);
+      if (level <= 0) continue;
+      const h = map.get(e.stage);
+      map.set(e.stage, { count: (h?.count ?? 0) + 1, level: Math.max(h?.level ?? 0, level) });
+    }
+    return map;
+  }, [events, now]);
+}
+
+/** A concrete colour per tone, for SVG arrowheads (marker defs do not inherit --tone). */
+const TONE_COLOR: Record<StageTone, string> = {
+  neutral: 'var(--muted)',
+  accent: 'var(--accent)',
+  money: 'var(--money)',
+  warn: 'var(--warn)',
+  danger: 'var(--danger)',
+};
+
 /** The actor who most often took the recent steps into `stage` (ties: the latest), else the usual one. */
 function moverInto(stage: FlowStage, recent: FlowStep[], fallback: FlowActor | undefined): FlowActor | undefined {
   const tally = new Map<FlowActor, { n: number; last: number }>();
@@ -126,10 +191,15 @@ type StageNodeT = Node<StageData, 'stage'>;
 
 interface ActorEdgeData extends Record<string, unknown> {
   actor?: FlowActor;
+  tone: StageTone;
+  heat: number; // 0..1, see useHeat
+  moves: number; // recent steps along this edge
+  used: boolean; // the target stage holds cases or saw recent steps
+  side: boolean; // a vertical edge down to needs_you / disputed
 }
 type ActorEdgeT = Edge<ActorEdgeData, 'actor'>;
 
-function buildGraph(flow: FlowOut, fresh: Fresh, onOpen: (caseId: string) => void) {
+function buildGraph(flow: FlowOut, fresh: Fresh, heat: HeatMap, onOpen: (caseId: string) => void) {
   const byStage = new Map<FlowStage, FlowCase[]>();
   for (const c of flow.cases) byStage.set(c.stage, [...(byStage.get(c.stage) ?? []), c]);
   // Most recently moved first (display order only).
@@ -150,7 +220,7 @@ function buildGraph(flow: FlowOut, fresh: Fresh, onOpen: (caseId: string) => voi
       stage,
       tone: STAGE_TONE[stage.id],
       cases: byStage.get(stage.id) ?? [],
-      fresh: fresh.stages.has(stage.id),
+      fresh: fresh.stages.has(stage.id) || (heat.get(stage.id)?.level ?? 0) > 0.35,
       freshCases: fresh.cases,
       onOpen,
     },
@@ -165,7 +235,10 @@ function buildGraph(flow: FlowOut, fresh: Fresh, onOpen: (caseId: string) => voi
   }
 
   const edge = (source: FlowStage, target: FlowStage, sideEdge: boolean, fallback?: FlowActor): ActorEdgeT => {
-    const live = fresh.stages.has(target);
+    const h = heat.get(target);
+    const live = fresh.stages.has(target) || (h?.level ?? 0) > 0;
+    const tone = STAGE_TONE[target];
+    const used = (byStage.get(target)?.length ?? 0) > 0 || flow.recent.some((s) => s.stage === target);
     return {
       id: `${source}->${target}`,
       source,
@@ -176,8 +249,20 @@ function buildGraph(flow: FlowOut, fresh: Fresh, onOpen: (caseId: string) => voi
       animated: live,
       focusable: false,
       selectable: false,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18, color: live ? 'var(--accent)' : 'var(--border-strong)' },
-      data: { actor: moverInto(target, flow.recent, fallback) },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: live ? 20 : 16,
+        height: live ? 20 : 16,
+        color: live || used ? TONE_COLOR[tone] : 'var(--border-strong)',
+      },
+      data: {
+        actor: moverInto(target, flow.recent, fallback),
+        tone,
+        heat: live ? Math.max(h?.level ?? 0, 0.6) : 0,
+        moves: h?.count ?? 0,
+        used,
+        side: sideEdge,
+      },
     };
   };
 
@@ -257,22 +342,41 @@ function ActorEdge(props: EdgeProps<ActorEdgeT>) {
     borderRadius: 18,
   });
   const actor = data?.actor;
+  const tone = data?.tone ?? 'neutral';
+  const heat = animated ? (data?.heat ?? 1) : 0;
+  const moves = data?.moves ?? 0;
+  const state = animated ? 'live' : data?.used ? 'used' : 'idle';
+  const motion = animated && !prefersReducedMotion();
+  // --heat (0..1) fades the glow out over the hot window.
+  const vars = { '--heat': heat.toFixed(2) } as CSSProperties;
   return (
     <>
-      <BaseEdge id={id} path={path} markerEnd={markerEnd} className={animated ? 'actor-edge live' : 'actor-edge'} />
-      {animated && !prefersReducedMotion() && (
-        <circle r={5} className="edge-dot">
-          <animateMotion dur="1.6s" repeatCount="indefinite" path={path} />
-        </circle>
-      )}
+      <g className={`edge-group tone-${tone} ${state}`} style={vars}>
+        {animated && <path d={path} className="edge-glow" fill="none" />}
+        <BaseEdge id={id} path={path} markerEnd={markerEnd} className={`actor-edge ${state}`} />
+        {motion && <path d={path} className="edge-comet" fill="none" />}
+        {motion &&
+          [0, 0.55, 1.1].map((begin) => (
+            <circle key={begin} r={begin === 0 ? 6 : 4} className="edge-dot">
+              <animateMotion dur="1.65s" begin={`${begin}s`} repeatCount="indefinite" path={path} />
+            </circle>
+          ))}
+      </g>
       {actor && (
         <EdgeLabelRenderer>
           <div
-            className={animated ? 'edge-actor live' : 'edge-actor'}
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            className={`edge-actor tone-${tone} ${state}`}
+            // Beside vertical edges and above horizontal ones, so the arrow itself stays visible.
+            style={{
+              ...vars,
+              transform: data?.side
+                ? `translate(14px, -50%) translate(${labelX}px, ${labelY}px)`
+                : `translate(-50%, -100%) translate(${labelX}px, ${labelY - 12}px)`,
+            }}
           >
             <ActorAvatar actor={actor} size="sm" />
             <span className="edge-actor-name">{actorLabel(actor)}</span>
+            {animated && moves > 0 && <span className="edge-moves">+{moves}</span>}
           </div>
         </EdgeLabelRenderer>
       )}
@@ -283,8 +387,8 @@ function ActorEdge(props: EdgeProps<ActorEdgeT>) {
 const nodeTypes = { stage: StageNode };
 const edgeTypes = { actor: ActorEdge };
 
-function FlowCanvas({ flow, fresh, onOpen }: { flow: FlowOut; fresh: Fresh; onOpen: (caseId: string) => void }) {
-  const graph = useMemo(() => buildGraph(flow, fresh, onOpen), [flow, fresh, onOpen]);
+function FlowCanvas({ flow, fresh, heat, onOpen }: { flow: FlowOut; fresh: Fresh; heat: HeatMap; onOpen: (caseId: string) => void }) {
+  const graph = useMemo(() => buildGraph(flow, fresh, heat, onOpen), [flow, fresh, heat, onOpen]);
   // React Flow measures each node and reports it as a change; the node only
   // shows (and its edges only draw) once that measurement is back in our state.
   const [nodes, setNodes] = useState<StageNodeT[]>(graph.nodes);
@@ -308,7 +412,7 @@ function FlowCanvas({ flow, fresh, onOpen }: { flow: FlowOut; fresh: Fresh; onOp
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
-        fitViewOptions={{ padding: 0.06 }}
+        fitViewOptions={{ padding: 0.08 }}
         minZoom={0.3}
         maxZoom={1.6}
         nodesDraggable={false}
@@ -332,6 +436,7 @@ function FlowCanvas({ flow, fresh, onOpen }: { flow: FlowOut; fresh: Fresh; onOp
 export function FlowPage() {
   const flow = useFlow();
   const fresh = useFresh(flow.data, flow.dataUpdatedAt);
+  const heat = useHeat(flow.data, flow.dataUpdatedAt);
   const [openCase, setOpenCase] = useState<string | null>(null);
   const onOpen = useCallback((caseId: string) => setOpenCase(caseId), []);
   const close = useCallback(() => setOpenCase(null), []);
@@ -375,7 +480,7 @@ export function FlowPage() {
 
       {data && data.cases.length > 0 && (
         <>
-          <FlowCanvas flow={data} fresh={fresh} onOpen={onOpen} />
+          <FlowCanvas flow={data} fresh={fresh} heat={heat} onOpen={onOpen} />
           <div className="flow-below">
             <LatestSteps flow={data} labels={labels} fresh={fresh} onOpen={onOpen} />
             <AgentTeam active={fresh.actors} />
