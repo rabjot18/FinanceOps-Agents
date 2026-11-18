@@ -25,6 +25,16 @@ FINANCEOPS_ENABLE_DEMO=1 FINANCEOPS_OWNER_TOKEN=<secret> .venv/bin/uvicorn api:c
 cd frontend && npm ci && npm test && npm run e2e   # owner console: unit + browser tests
 ```
 
+On Windows (PowerShell) use `py -m venv .venv`, `.venv\Scripts\python ...`, and the
+one-command demo launcher (Milestone 6):
+
+```powershell
+.\start.ps1            # API + worker, scripted agents and template customers: no API key, no cost
+.\start.ps1 -Live      # real Claude agents + Haiku customers; needs $env:ANTHROPIC_API_KEY; capped
+.\start.ps1 -Fresh     # empty demo database first
+.venv\Scripts\python -m unittest            # all backend tests
+```
+
 Then open http://127.0.0.1:8000/docs, or the owner console at
 http://127.0.0.1:8000/app/ (after `npm run build` in `frontend/`). Proposals,
 approve/reject/execute, policy, action details and investigations need
@@ -80,10 +90,16 @@ independently redesign the same interfaces.
   `FINANCEOPS_EFFORT` (default `medium`); credentials via `ANTHROPIC_API_KEY`
   or an `ant auth login` profile.
 
-## Action rules (Milestone 3)
-- Code writes every outgoing message (`messages.render`) from stored facts:
-  amounts, invoice ID, evidence IDs, the stored contact. Never put model text,
-  rationale or evidence text into a message.
+## Action rules (Milestone 3, message rule changed in Milestone 6)
+- A message is either a code template (routine reminders) or text the
+  collections agent wrote. Agent text must pass `messages.check_agent_text`
+  (only the invoice's real amounts, no other invoice IDs, no links, e-mail
+  addresses, phone numbers or bank details, no concessions or threats, no
+  instruction-like text); code then adds the invoice ID to the subject and
+  appends the facts (amounts, references, "simulated" label). The recipient
+  always comes from the stored contact. Never put the rationale or evidence
+  text into a message. The agent's text is stored in `actions.message_text`
+  so `validate_action` can re-render and re-check the hash.
 - An approval binds the payload hash, invoice version and policy version and
   expires after `approval_ttl_minutes`. Over HTTP the owner must send the
   `payload_hash` they reviewed. `execute()` re-checks all of them and only
@@ -135,10 +151,10 @@ independently redesign the same interfaces.
   (`agent_controls`) are checked before every automatic execution or agent run.
   `apply_autonomy` re-evaluates, checks the switch, approves and queues in one
   transaction; the worker holds automatically approved messages while paused.
-- Agent reminders always wait for the owner. Other agent proposals also wait
-  unless `FINANCEOPS_AGENT_AUTOSEND=1`, which is only switched on after a live
-  evaluation (`eval_run.py --live`) shows no unauthorized actions. Automatic
-  reminders only on clean cases: the contract is the only evidence. New
+- Agent proposals wait for the owner unless `FINANCEOPS_AGENT_AUTOSEND=1`
+  (Milestone 6: then agent-written messages, reminders included, follow the
+  autonomy rules; see the Milestone 6 rules below). Orchestrator (code)
+  reminders go out automatically only on clean cases: the contract is the only evidence. New
   documents or replies stop the cadence until reviewed (`has_unreviewed_evidence`).
 - Agents (step 2): the collections agent can `escalate_to_owner` instead of
   proposing; a newer automatic plan supersedes older pending ones, and after
@@ -165,6 +181,33 @@ independently redesign the same interfaces.
 - Routes frozen in step 0 whose logic lands later answer 503 "Not built yet"
   (`api._not_built`); never return made-up data from them.
 - Live UI updates poll `GET /activity?after=<cursor>`; no server push yet.
+
+## Milestone 6 rules (hard caps, agent team, reactive demo)
+- Hard spend caps on real money: `FINANCEOPS_DAILY_CAP_CENTS` (default 450,
+  by the REAL local calendar day) and `FINANCEOPS_TOTAL_CAP_CENTS` (default
+  2500). Env only, never HTTP or policy. `core.model_call_allowed()` is checked
+  BEFORE every model call (agents, briefing, customer simulator, and
+  owner-started investigations); it keeps `CALL_MARGIN_CENTS` of room, so one
+  call cannot pass a cap. `model_usage.wall_at` is the real-clock time.
+- Agents: collections (writes messages, `schedule_follow_up`, escalates with a
+  `recommendation`), disputes (read-only plus `recommend_to_owner`; queued as
+  an `investigate` job with `ref="agent:disputes"` when a dispute arrives),
+  briefing/Reporter. Same rules as before: no tool takes an ID, code binds
+  the case, code decides autonomy.
+- Agent messages go out automatically only with `FINANCEOPS_AGENT_AUTOSEND=1`
+  (start.ps1 sets it), only with checked agent text, and never on a case whose
+  evidence `messages.looks_like_instructions` flags.
+- `case_flow` (append-only) records each stage and the actor who moved the
+  case there; `_record()` writes it in the same transaction. Summaries are
+  written by code. `/flow`, `/cases/{id}/flow` and `/outcomes` read only
+  stored rows.
+- Reactive demo (`/demo/run`, `generator.load_reactive`): hidden personas in
+  `sim_customers` (no agent tool reads it). `customer_sim.react` decides the
+  customer's behaviour in code; Haiku only writes the reply wording (injection
+  replies are always templates). Reactions are ordinary events, source
+  `generator`, ref `sim:<action id>:...`.
+- `scripted_agent.py` is a free stand-in for Claude (`worker.py
+  --scripted-agents`); it records zero tokens.
 
 ## Current limits
 The worker is a single process (run one per database). The only delivery
