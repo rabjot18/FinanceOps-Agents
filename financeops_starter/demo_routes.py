@@ -76,7 +76,9 @@ def build_demo_router(core, require_owner, get_model_client, db_path):
             from agent import Investigator
             client = get_model_client()
             factory = lambda c: Investigator(c, client, enforce_budget=True)  # noqa: E731
-        result = run_once(fc, SimulatedInbox(db_path), factory)
+        import customer_sim  # simulated customers reply with templates here (no model call)
+        result = run_once(fc, SimulatedInbox(db_path), factory,
+                          simulator=lambda c: customer_sim.react(c, None))
         return {"simulated_time": fc.clock(), "result": result}
 
     @demo.get("/scenarios", response_model=schemas.ScenarioListOut)

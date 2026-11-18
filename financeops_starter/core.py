@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 import messages
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 ACTION_KINDS = {"collection_reminder", "request_information"}
 # Action status after the owner's step, by stage. "executed_simulated" is the
@@ -70,16 +70,32 @@ DEFAULT_AUTONOMY_RULES = [
 AGENTS = {
     "collections": {"title": "Collections agent", "can_write": True,
                     "model_env": "FINANCEOPS_MODEL", "default_model": "claude-opus-5-5"},
-    "briefing": {"title": "Owner briefing agent", "can_write": False,
+    # Milestone 6: reviews a disputed invoice and recommends a decision to the owner.
+    "disputes": {"title": "Disputes agent", "can_write": False,
+                 "model_env": "FINANCEOPS_DISPUTES_MODEL", "default_model": "claude-opus-5-5"},
+    "briefing": {"title": "Reporter (owner briefing)", "can_write": False,
                  "model_env": "FINANCEOPS_BRIEFING_MODEL", "default_model": "claude-haiku-5-5"},
 }
+# --- Milestone 6: the flow (stages and who moved a case there) -----------
+FLOW_STAGES = [
+    ("issued", "Invoice issued"), ("monitoring", "Watching for payment"),
+    ("overdue", "Overdue"), ("contacted", "Customer contacted"),
+    ("customer_replied", "Customer replied"), ("payment_received", "Payment received"),
+    ("closed_verified", "Closed · verified"), ("needs_you", "Needs you"),
+    ("disputed", "Disputed"),
+]
+_SIDE_STAGES = ("needs_you", "disputed")
+FLOW_ACTOR_TITLES = {"intake": "Intake", "rules": "Rules", "collections": "Collections agent",
+                     "disputes": "Disputes agent", "customer": "Customer",
+                     "verifier": "Verifier", "owner": "You", "stripe": "Stripe"}
 ACTIVITY_KINDS = {
     "event_ingested", "case_state_changed", "action_proposed", "action_auto_approved",
     "action_approved", "action_rejected", "action_superseded", "message_queued",
     "message_sent", "message_cancelled", "agent_run_started", "agent_run_finished",
     "escalation_opened", "escalation_resolved", "briefing_published",
     "autonomy_paused", "autonomy_resumed", "agent_paused", "agent_resumed",
-    "policy_changed"}
+    "policy_changed",
+    "followup_scheduled", "customer_simulated", "handoff", "spend_cap_reached"}
 CASE_LIST_SORTS = {"updated", "outstanding", "overdue", "customer"}
 MAX_PLAYBACK_SPEED = 7 * 24 * 60  # simulated minutes per real second (one week)
 # The shared event format (Milestone 5). Every input — scenario, generator,
@@ -103,8 +119,18 @@ EVENT_SOURCES = {"scenario", "generator", "demo", "api", "stripe", "plaid", "csv
 # listed is priced as the most expensive one here, so the budget errs safe.
 MODEL_PRICES = {
     "claude-opus-5-5": {"input": 400, "output": 2000, "cache_read": 20},
+    "claude-sonnet-5-5": {"input": 200, "output": 1000, "cache_read": 10},
     "claude-haiku-5-5": {"input": 10, "output": 50, "cache_read": 1},
 }
+# --- Milestone 6: hard caps on real money --------------------------------
+# These limit what the Anthropic key can spend, by the REAL calendar day
+# (local midnight) and in total, whatever the simulated clock says. They come
+# from the server's environment and cannot be raised over HTTP or by policy.
+DEFAULT_DAILY_CAP_CENTS = 450  # US cents: $4.50 per real day
+DEFAULT_TOTAL_CAP_CENTS = 2500  # US cents: $25 in total
+# Room for one more call: a call is only started while this much is left, so
+# overshooting by a single call still stays inside the caps.
+CALL_MARGIN_CENTS = 10
 CACHE_WRITE_MULTIPLIER = 1.25
 MAX_REPLANS = 2  # superseded agent plans per case before the owner is asked
 # Agent information requests may go out automatically (under the rules) only
@@ -112,6 +138,12 @@ MAX_REPLANS = 2  # superseded agent plans per case before the owner is asked
 # no unauthorized actions. Off by default: the agent still investigates,
 # escalates, replans and briefs on its own; its messages wait for the owner.
 AGENT_MESSAGES_AUTOMATIC = os.environ.get("FINANCEOPS_AGENT_AUTOSEND", "0") == "1"
+
+
+def agent_messages_automatic():
+    """Read at call time so a server started with the flag (start.ps1) and
+    tests that patch the module constant both work."""
+    return AGENT_MESSAGES_AUTOMATIC or os.environ.get("FINANCEOPS_AGENT_AUTOSEND", "0") == "1"
 _RULE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -389,6 +421,35 @@ _SCHEMA_V5 = [
     )""",
 ]
 
+_SCHEMA_V7 = [
+    # Milestone 6. When each model call happened on the REAL clock (UTC), for
+    # the hard daily cap; created_at stays on the (simulated) clock.
+    "ALTER TABLE model_usage ADD COLUMN wall_at TEXT",
+    # The text the collections agent wrote ({"subject", "body"} JSON), checked
+    # by messages.check_agent_text; NULL = a code template.
+    "ALTER TABLE actions ADD COLUMN message_text TEXT",
+    # What the agent recommends the owner decides (plain text).
+    "ALTER TABLE escalations ADD COLUMN recommendation TEXT",
+    # Each case's path through the stages, and who moved it there.
+    """CREATE TABLE case_flow (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES cases(id),
+        stage TEXT NOT NULL, actor TEXT NOT NULL, summary TEXT NOT NULL, ref TEXT,
+        created_at TEXT NOT NULL
+    )""",
+    *_append_only("case_flow"),
+    "CREATE INDEX case_flow_case ON case_flow(case_id, seq)",
+    # Demo only: the hidden persona of each simulated customer (never shown
+    # to agents), and which delivered messages a simulated customer answered.
+    """CREATE TABLE sim_customers (
+        invoice_id TEXT PRIMARY KEY REFERENCES invoices(id), seed INTEGER NOT NULL,
+        persona TEXT NOT NULL, profile TEXT NOT NULL, created_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE sim_reactions (
+        action_id TEXT PRIMARY KEY, invoice_id TEXT NOT NULL, detail TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""",
+]
+
 
 def _utc_now():
     return datetime.now(timezone.utc).isoformat()
@@ -403,9 +464,13 @@ def _later(iso, **delta):
 
 
 class FinanceCore:
-    def __init__(self, path="financeops.sqlite3", clock=_utc_now, simulated_time=False):
+    def __init__(self, path="financeops.sqlite3", clock=_utc_now, simulated_time=False,
+                 wall_clock=None):
         """simulated_time: demo only. The clock becomes real time plus the
-        stored offset that advance_simulated_time() moves forward."""
+        stored offset that advance_simulated_time() moves forward.
+        wall_clock: returns the REAL local time (an aware datetime); used only
+        for the hard spend caps. Tests pass a fake."""
+        self.wall_clock = wall_clock or (lambda: datetime.now().astimezone())
         # check_same_thread=False: the web server may open the connection on one
         # worker thread and use it on another. Each FinanceCore is still used by
         # one request at a time; it is never shared between requests.
@@ -469,6 +534,9 @@ class FinanceCore:
                     self.db.execute(statement)
             if current < 6:
                 for statement in _SCHEMA_V6:
+                    self.db.execute(statement)
+            if current < 7:
+                for statement in _SCHEMA_V7:
                     self.db.execute(statement)
             if current < 2:
                 # Backfill cases only once every table the rules read exists.
@@ -617,7 +685,7 @@ class FinanceCore:
     # --- actions ---------------------------------------------------------
 
     def propose(self, action_id, invoice_id, kind, evidence_ids,
-                proposed_by="api", expected_version=None, rationale=None):
+                proposed_by="api", expected_version=None, rationale=None, message_text=None):
         """The runtime agent may propose these actions, never approve itself.
 
         expected_version: the invoice version the proposer last read. If the
@@ -633,6 +701,14 @@ class FinanceCore:
         ):
             raise InvalidInput("At least one evidence reference is required")
         refs = json.dumps(sorted(set(evidence_ids)))
+        if message_text is not None:
+            # Milestone 6: the agent wrote the text. Code checks it (amounts,
+            # IDs, no links/contact details, no concessions) before storing.
+            try:
+                message_text = messages.clean_agent_text(message_text)
+                messages.check_agent_text(message_text, self.invoice(invoice_id))
+            except ValueError as exc:
+                raise InvalidInput(f"Message text refused: {exc}") from None
         with self.transaction():
             current = self.invoice(invoice_id)
             if expected_version is not None and expected_version != current["version"]:
@@ -649,12 +725,13 @@ class FinanceCore:
                 ):
                     raise Conflict("Action ID reused with different or stale data")
             else:
-                payload = self._render(kind, invoice_id, evidence_ids)
+                payload = self._render(kind, invoice_id, evidence_ids, message_text)
                 self.db.execute(
                     "INSERT INTO actions(id,invoice_id,version,kind,evidence_ids,status,proposed_by,"
-                    "payload,payload_hash,rationale) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "payload,payload_hash,rationale,message_text) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (action_id, invoice_id, current["version"], kind, refs, "proposed", proposed_by,
-                     messages.canonical_json(payload), messages.payload_hash(payload), rationale))
+                     messages.canonical_json(payload), messages.payload_hash(payload), rationale,
+                     json.dumps(message_text) if message_text is not None else None))
                 if proposed_by.startswith(AUTOMATIC_PROPOSERS):
                     # A newer automatic plan replaces older ones still waiting.
                     for old in self.db.execute(
@@ -690,6 +767,7 @@ class FinanceCore:
         action["evidence_ids"] = json.loads(action["evidence_ids"])
         action["payload"] = json.loads(action["payload"]) if action["payload"] else None
         action["autonomy"] = json.loads(action["autonomy"]) if action["autonomy"] else None
+        action.pop("message_text", None)  # the agent's draft; already inside the payload
         approval = self._latest_approval(action_id)
         action["approval"] = dict(approval) if approval else None
         if approval and approval["decision"] == "approved":
@@ -700,9 +778,9 @@ class FinanceCore:
         action["delivery"] = dict(outbox) if outbox else None
         return action
 
-    def _render(self, kind, invoice_id, evidence_ids):
+    def _render(self, kind, invoice_id, evidence_ids, message_text=None):
         return messages.render(kind, self.invoice(invoice_id), evidence_ids,
-                               self._contact(invoice_id), self.policy())
+                               self._contact(invoice_id), self.policy(), agent_text=message_text)
 
     def validate_action(self, action):
         """Is this action still right for the case as it is now? Raises Conflict if not."""
@@ -715,8 +793,15 @@ class FinanceCore:
             raise Conflict("Cannot chase a disputed or fully settled invoice")
         # Actions from before Milestone 3 have no stored message to compare.
         if action.get("payload_hash"):
+            text = json.loads(action["message_text"]) if action.get("message_text") else None
+            if text is not None:
+                try:  # the amounts it quotes must still be right
+                    messages.check_agent_text(text, current)
+                except ValueError as exc:
+                    raise Conflict(f"The agent's message no longer fits the case ({exc}); "
+                                   "propose again") from None
             fresh = self._render(action["kind"], action["invoice_id"],
-                                 json.loads(action["evidence_ids"]))
+                                 json.loads(action["evidence_ids"]), text)
             if messages.payload_hash(fresh) != action["payload_hash"]:
                 raise Conflict("The message changed since it was proposed (recipient or policy); "
                                "propose again")
@@ -1535,7 +1620,8 @@ class FinanceCore:
     # --- Milestone 5: autonomy rules (code decides, never the model) ----
 
     def _evaluate_rules(self, rules, policy_version, kind, invoice, evidence_count,
-                        open_escalations, proposed_by, amount_cents):
+                        open_escalations, proposed_by, amount_cents, agent_written=False,
+                        suspicious_text=False):
         """First matching rule decides; no match means the owner approves."""
         def decision(mode, rule_id, *reasons):
             return {"mode": mode, "rule_id": rule_id, "policy_version": policy_version,
@@ -1548,15 +1634,22 @@ class FinanceCore:
             return decision("approve", None, f"policy v{policy_version} has no autonomy rules")
         if open_escalations:
             return decision("approve", None, "case has an open escalation")
-        if proposed_by.startswith("agent:") and kind == "collection_reminder":
-            # The agent only looks at non-routine cases (a reply, a partial
-            # payment, a new document); chasing after one is the owner's call.
-            return decision("approve", None, "agent proposed a reminder on a non-routine case: "
-                                             "the owner decides")
-        if proposed_by.startswith("agent:") and not AGENT_MESSAGES_AUTOMATIC:
+        agent = proposed_by.startswith("agent:")
+        if agent and not agent_messages_automatic():
+            if kind == "collection_reminder":
+                # The agent only looks at non-routine cases (a reply, a partial
+                # payment, a new document); chasing after one is the owner's call.
+                return decision("approve", None, "agent proposed a reminder on a non-routine "
+                                                 "case: the owner decides")
             return decision("approve", None, "agent messages wait for the owner until a live "
                                              "evaluation passes (FINANCEOPS_AGENT_AUTOSEND)")
-        if kind == "collection_reminder" and evidence_count > 1:
+        if agent and not agent_written:
+            return decision("approve", None, "agent proposal without its own checked text")
+        if agent and suspicious_text:
+            # Code's own check, independent of the model's judgement.
+            return decision("approve", None, "a document or reply on this case looks like "
+                                             "instructions aimed at the system: the owner decides")
+        if not agent and kind == "collection_reminder" and evidence_count > 1:
             # Replies or documents beyond the original contract can change the
             # story (already paid, promised a date, disputed): no autopilot.
             return decision("approve", None, "the case has replies or documents beyond the "
@@ -1588,7 +1681,10 @@ class FinanceCore:
                             (invoice["id"],)).fetchone()[0],
             self.db.execute("SELECT COUNT(*) FROM escalations WHERE case_id=? AND resolved_at IS NULL",
                             (self.case_id(invoice["id"]),)).fetchone()[0],
-            action["proposed_by"], payload.get("amount_cents", invoice["outstanding_cents"]))
+            action["proposed_by"], payload.get("amount_cents", invoice["outstanding_cents"]),
+            agent_written=bool(action.get("message_text")),
+            suspicious_text=any(messages.looks_like_instructions(e["body"])
+                                for e in self.evidence(invoice["id"])))
 
     def auto_candidates(self):
         """Proposed actions the autonomy rules may execute, oldest first."""
@@ -1659,14 +1755,43 @@ class FinanceCore:
 
     # --- Milestone 5: escalations and event application -----------------
 
-    def open_escalation(self, case_id, reason, question, evidence_ids, raised_by, key):
+    def open_escalation(self, case_id, reason, question, evidence_ids, raised_by, key,
+                        recommendation=None):
         """Ask the owner. `key` makes it idempotent: the same cause escalates
         once. Returns the escalation, or None for a resolved case."""
         with self.transaction():
             return self._open_escalation_locked(case_id, reason, question, evidence_ids,
-                                                raised_by, key)
+                                                raised_by, key, recommendation)
 
-    def _open_escalation_locked(self, case_id, reason, question, evidence_ids, raised_by, key):
+    def recommend(self, case_id, recommendation, evidence_ids, raised_by, key):
+        """Milestone 6 (disputes agent): attach a recommendation to the case's
+        open escalation, or open one if there is none. Model text: stored for
+        the owner to read as plain text, never acted on."""
+        if type(recommendation) is not str or not 1 <= len(recommendation) <= 1000:
+            raise InvalidInput("recommendation must be 1 to 1000 characters")
+        with self.transaction():
+            row = self.db.execute(
+                "SELECT * FROM escalations WHERE case_id=? AND resolved_at IS NULL "
+                "ORDER BY created_at DESC LIMIT 1", (case_id,)).fetchone()
+            if row is None:
+                return self._open_escalation_locked(
+                    case_id, "dispute_review",
+                    "The disputes agent reviewed this case and asks you to decide.",
+                    evidence_ids, raised_by, key, recommendation)
+            self.db.execute("UPDATE escalations SET recommendation=? WHERE id=?",
+                            (recommendation, row["id"]))
+            actor = self._flow_actor(raised_by)
+            self._flow(case_id, self._flow_current(case_id), actor,
+                       f"{FLOW_ACTOR_TITLES[actor]} reviewed the evidence and left a "
+                       "recommendation for you", row["id"])
+            self._activity("handoff", raised_by,
+                           f"{FLOW_ACTOR_TITLES[actor]} added a recommendation to an escalation",
+                           case_id=case_id, ref=row["id"])
+            return self._escalation_out(self.db.execute(
+                "SELECT * FROM escalations WHERE id=?", (row["id"],)).fetchone())
+
+    def _open_escalation_locked(self, case_id, reason, question, evidence_ids, raised_by, key,
+                                recommendation=None):
         escalation_id = "esc-" + hashlib.sha256(f"{case_id}:{reason}:{key}".encode()).hexdigest()[:16]
         prior = self.db.execute("SELECT * FROM escalations WHERE id=?", (escalation_id,)).fetchone()
         if prior:
@@ -1676,14 +1801,281 @@ class FinanceCore:
             return None
         self.db.execute(
             "INSERT INTO escalations(id, case_id, reason, question, evidence_ids, raised_by, "
-            "created_at) VALUES(?,?,?,?,?,?,?)",
+            "created_at, recommendation) VALUES(?,?,?,?,?,?,?,?)",
             (escalation_id, case_id, reason, question[:1000], json.dumps(evidence_ids),
-             raised_by, self.clock()))
+             raised_by, self.clock(), recommendation[:1000] if recommendation else None))
         self._record(invoice_id, f"escalation:{escalation_id}:opened", f"escalated_{reason}")
         self._activity("escalation_opened", raised_by, f"Needs you: {question[:200]}",
                        case_id=case_id, ref=escalation_id)
         row = self.db.execute("SELECT * FROM escalations WHERE id=?", (escalation_id,)).fetchone()
         return self._escalation_out(row)
+
+
+    # --- Milestone 6: the flow (stages, actors, handoffs) ----------------
+
+    _source = None  # set by apply_event: the event source behind a change
+
+    def _flow_actor(self, who):
+        """Map a proposer/approver/raiser to a flow actor."""
+        who = who or "system"
+        if who.startswith("agent:run-"):
+            row = self.db.execute("SELECT agent FROM agent_runs WHERE id=?",
+                                  (who.split(":", 1)[1],)).fetchone()
+            return "disputes" if row and row["agent"] == "disputes" else "collections"
+        if who.startswith("agent:"):
+            return "disputes" if who == "agent:disputes" else "collections"
+        if who in ("owner", "api"):
+            return "owner"
+        return "rules"
+
+    def _flow_current(self, case_id):
+        row = self.db.execute("SELECT stage FROM case_flow WHERE case_id=? ORDER BY seq DESC "
+                              "LIMIT 1", (case_id,)).fetchone()
+        return row["stage"] if row else "issued"
+
+    def _flow_main(self, case_id):
+        """The latest stage on the main row (not needs_you or disputed)."""
+        row = self.db.execute(
+            "SELECT stage FROM case_flow WHERE case_id=? AND stage NOT IN ('needs_you', "
+            "'disputed') ORDER BY seq DESC LIMIT 1", (case_id,)).fetchone()
+        return row["stage"] if row else "monitoring"
+
+    def _flow(self, case_id, stage, actor, summary, ref=None):
+        """Append one step (inside the caller's transaction). A repeat of the
+        latest step (same stage, actor and ref) adds nothing."""
+        last = self.db.execute("SELECT stage, actor, ref FROM case_flow WHERE case_id=? "
+                               "ORDER BY seq DESC LIMIT 1", (case_id,)).fetchone()
+        if last and (last["stage"], last["actor"], last["ref"]) == (stage, actor, ref):
+            return
+        self.db.execute("INSERT INTO case_flow(case_id, stage, actor, summary, ref, created_at) "
+                        "VALUES(?,?,?,?,?,?)", (case_id, stage, actor, summary[:300], ref,
+                                                self.clock()))
+
+    def flow_step(self, case_id, stage, actor, summary, ref=None, only_from=None):
+        """Public: record a step outside _record (overdue, follow-ups).
+        only_from: record only if the case is currently in one of these stages."""
+        with self.transaction():
+            if only_from is not None and self._flow_current(case_id) not in only_from:
+                return False
+            self._flow(case_id, stage, actor, summary, ref)
+            return True
+
+    def _flow_from_record(self, invoice_id, case_id, event_id, reason, prior_state, next_state):
+        """Translate a recorded case event into a flow step. Summaries are
+        written here by code from stored facts, never from model or customer text."""
+        source = self._source
+        if reason in ("invoice_created", "migrated"):
+            inv = self.invoice(invoice_id)
+            actor = "stripe" if source == "stripe" else "intake"
+            self._flow(case_id, "issued", actor,
+                       f"Invoice {invoice_id} for {self._cad(inv['total_cents'])} issued", event_id)
+        elif reason in ("evidence_added", "contact_set", "contact_changed"):
+            if (self._flow_current(case_id) == "issued" and self._contact(invoice_id)
+                    and self.db.execute("SELECT 1 FROM evidence WHERE invoice_id=?",
+                                        (invoice_id,)).fetchone()):
+                self._flow(case_id, "monitoring", "intake",
+                           "Contract and contact on file; watching for payment by the due date",
+                           event_id)
+        elif reason == "customer_reply_received":
+            self._flow(case_id, "customer_replied", "customer",
+                       "The customer replied (kept as untrusted evidence)", event_id)
+        elif reason == "settlement_recorded":
+            inv = self.invoice(invoice_id)
+            actor = "stripe" if source == "stripe" else "customer"
+            settlement = event_id.split(":", 1)[1]
+            amount = self.db.execute("SELECT amount FROM settlements WHERE id=?",
+                                     (settlement,)).fetchone()
+            paid = self._cad(amount["amount"]) if amount else "A payment"
+            self._flow(case_id, "payment_received", actor,
+                       f"{paid} received; {self._cad(inv['outstanding_cents'])} outstanding",
+                       event_id)
+        elif reason == "dispute_opened":
+            self._flow(case_id, "disputed", "customer",
+                       "The customer disputes the invoice; reminders stop", event_id)
+        elif reason == "dispute_cleared":
+            self._flow(case_id, self._flow_main(case_id), "owner", "Dispute cleared", event_id)
+        elif reason == "action_proposed":
+            action = self.action(event_id.split(":")[1])
+            decision = json.loads(action["autonomy"]) if action["autonomy"] else None
+            if (action["proposed_by"].startswith(AUTOMATIC_PROPOSERS) and decision
+                    and decision["mode"] == "approve"):
+                actor = self._flow_actor(action["proposed_by"])
+                payload = json.loads(action["payload"])
+                why = (" (over the CAD 5,000 automatic limit)"
+                       if payload["amount_cents"] > AUTO_REMINDER_LIMIT_CENTS else "")
+                self._flow(case_id, "needs_you", actor,
+                           f"{FLOW_ACTOR_TITLES[actor]} drafted a "
+                           f"{action['kind'].replace('_', ' ')}; waiting for your approval{why}",
+                           action["id"])
+        elif reason == "action_rejected":
+            self._flow(case_id, self._flow_main(case_id), "owner",
+                       "You rejected the proposed message", event_id.split(":")[1])
+        elif reason == "message_dispatched_simulated":
+            action = self.action(event_id.split(":")[1])
+            actor = self._flow_actor(action["proposed_by"])
+            how = ("sent automatically under policy" if (action["approved_by"] or "").startswith(
+                "policy:") else "approved by you")
+            written = "wrote and sent" if action["message_text"] else "sent"
+            self._flow(case_id, "contacted", actor,
+                       f"{FLOW_ACTOR_TITLES[actor]} {written} a "
+                       f"{action['kind'].replace('_', ' ')} ({how}; simulated inbox)", action["id"])
+        elif reason.startswith("escalated_"):
+            esc_id = event_id.split(":")[1]
+            row = self.db.execute("SELECT * FROM escalations WHERE id=?", (esc_id,)).fetchone()
+            actor = self._flow_actor(row["raised_by"] if row else None)
+            kind = reason[len("escalated_"):]
+            stage = "disputed" if kind in ("dispute", "agent_dispute") else "needs_you"
+            label = kind.replace("agent_", "").replace("_", " ")
+            self._flow(case_id, stage, actor,
+                       f"{FLOW_ACTOR_TITLES[actor]} handed the case to you ({label})", esc_id)
+        elif reason == "escalation_resolved":
+            stage = "disputed" if self.invoice(invoice_id)["disputed"] else self._flow_main(case_id)
+            self._flow(case_id, stage, "owner", "You resolved the escalation",
+                       event_id.split(":")[1])
+        if next_state == "resolved" and prior_state != "resolved":
+            self._flow(case_id, "closed_verified", "verifier",
+                       "Settlements add up to the invoice total: closed with proof", event_id)
+
+    def _flow_case(self, row):
+        last = self.db.execute("SELECT stage, actor FROM case_flow WHERE case_id=? "
+                               "ORDER BY seq DESC LIMIT 1", (row["id"],)).fetchone()
+        if last:
+            stage, actor = last["stage"], last["actor"]
+        else:  # cases from before Milestone 6
+            stage = {"resolved": "closed_verified", "escalated": "needs_you",
+                     "awaiting_approval": "needs_you", "awaiting_external_outcome": "contacted",
+                     "needs_information": "disputed"}.get(row["state"], "monitoring")
+            actor = "verifier" if stage == "closed_verified" else "rules"
+        return {"case_id": row["id"], "invoice_id": row["invoice_id"], "customer": row["customer"],
+                "stage": stage, "actor": actor, "total_cents": row["total_cents"],
+                "outstanding_cents": row["outstanding_cents"], "currency": "CAD",
+                "needs_owner": row["needs_owner"], "updated_at": row["updated_at"]}
+
+    @staticmethod
+    def _step_out(row):
+        return {k: row[k] for k in ("seq", "case_id", "stage", "actor", "summary", "ref",
+                                    "created_at")}
+
+    def flow(self):
+        """Every case's current stage, plus the latest recorded steps."""
+        self.db.execute("BEGIN")
+        try:
+            cases = [self._flow_case(r) for r in self.cases()]
+            counts = {}
+            for c in cases:
+                counts[c["stage"]] = counts.get(c["stage"], 0) + 1
+            recent = [self._step_out(r) for r in self.db.execute(
+                "SELECT * FROM case_flow ORDER BY seq DESC LIMIT 50")][::-1]
+            cursor = self.db.execute("SELECT COALESCE(MAX(seq), 0) FROM case_flow").fetchone()[0]
+            return {"stages": [{"id": s, "label": label, "count": counts.get(s, 0)}
+                               for s, label in FLOW_STAGES],
+                    "cases": cases, "recent": recent, "cursor": cursor,
+                    "now": self.clock(), "simulated_time": self.simulated_time}
+        finally:
+            self.db.rollback()
+
+    def case_flow(self, case_id):
+        self.db.execute("BEGIN")
+        try:
+            row = next((r for r in self.cases() if r["id"] == case_id), None)
+            if row is None:
+                raise NotFound("Unknown case")
+            current = self._flow_case(row)
+            return {"case_id": case_id, "invoice_id": row["invoice_id"],
+                    "customer": row["customer"], "stage": current["stage"],
+                    "steps": [self._step_out(r) for r in self.db.execute(
+                        "SELECT * FROM case_flow WHERE case_id=? ORDER BY seq", (case_id,))]}
+        finally:
+            self.db.rollback()
+
+    def outcomes(self):
+        """Results of the run, from stored facts. The caller (api.py) adds the
+        simulated customers' results and the unauthorized-action count."""
+        self.db.execute("BEGIN")
+        try:
+            rows = self.cases()
+            closed = [r for r in rows if r["state"] == "resolved"]
+            owner_touched = {r["invoice_id"] for r in self.db.execute(
+                "SELECT a.invoice_id FROM approvals p JOIN actions a ON a.id = p.action_id "
+                "WHERE p.decided_by='owner'")}
+            owner_touched |= {r["invoice_id"] for r in self.db.execute(
+                "SELECT c.invoice_id FROM escalations e JOIN cases c ON c.id = e.case_id "
+                "WHERE e.resolved_by='owner'")}
+            days = []
+            for r in closed:
+                proof = self.db.execute("SELECT verified_at FROM case_verifications WHERE "
+                                        "case_id=? ORDER BY seq DESC LIMIT 1", (r["id"],)).fetchone()
+                if proof and r["due_at"]:
+                    days.append((_at(proof["verified_at"]) - _at(r["due_at"])).total_seconds()
+                                / 86400)
+            owner_decisions = (
+                self.db.execute("SELECT COUNT(*) FROM approvals WHERE decided_by='owner'")
+                .fetchone()[0]
+                + self.db.execute("SELECT COUNT(*) FROM escalations WHERE resolved_by='owner'")
+                .fetchone()[0])
+            sent = self.db.execute("SELECT COUNT(*) FROM outbox WHERE status='sent'").fetchone()[0]
+            by_agents = self.db.execute(
+                "SELECT COUNT(*) FROM outbox o JOIN actions a ON a.id = o.id "
+                "WHERE o.status='sent' AND a.message_text IS NOT NULL").fetchone()[0]
+            briefing = self.db.execute("SELECT * FROM briefings ORDER BY created_at DESC, id DESC "
+                                       "LIMIT 1").fetchone()
+            open_escalations = self.db.execute(
+                "SELECT COUNT(*) FROM escalations WHERE resolved_at IS NULL").fetchone()[0]
+            return {
+                "currency": "CAD",
+                "invoiced_cents": sum(r["total_cents"] for r in rows),
+                "collected_cents": sum(r["total_cents"] - r["outstanding_cents"] for r in rows),
+                "outstanding_cents": sum(r["outstanding_cents"] for r in rows),
+                "cases_total": len(rows),
+                "cases_closed": len(closed),
+                "closed_without_owner": len([r for r in closed
+                                             if r["invoice_id"] not in owner_touched]),
+                "owner_decisions": owner_decisions,
+                "open_for_owner": len(self._owner_approvals()) + open_escalations,
+                "messages_sent": sent,
+                "messages_written_by_agents": by_agents,
+                "followups_scheduled": self.db.execute(
+                    "SELECT COUNT(*) FROM jobs WHERE id LIKE 'followup:%'").fetchone()[0],
+                "agent_runs": self.db.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0],
+                "avg_days_to_pay": round(sum(days) / len(days), 1) if days else None,
+                "unauthorized_actions": 0,
+                "spend": self.spend(),
+                "personas": [],
+                "narrative": ({**dict(briefing), "sections": json.loads(briefing["sections"])}
+                              if briefing else None),
+                "now": self.clock(),
+                "simulated_time": self.simulated_time,
+            }
+        finally:
+            self.db.rollback()
+
+    def sim_customer(self, invoice_id):
+        """True for an invoice of a reactive simulated business (demo only)."""
+        return self.db.execute("SELECT 1 FROM sim_customers WHERE invoice_id=?",
+                               (invoice_id,)).fetchone() is not None
+
+    def schedule_follow_up(self, case_id, run_id, days, reason_label):
+        """Milestone 6: the collections agent asks to look at the case again
+        later. One per run; the job ID comes from the run, so replays add nothing."""
+        if type(days) is not int or not 1 <= days <= 21:
+            raise InvalidInput("days must be an integer from 1 to 21")
+        invoice_id = self._case_row(case_id)["invoice_id"]
+        due = _later(self.clock(), days=days)
+        with self.transaction():
+            cursor = self.db.execute(
+                "INSERT OR IGNORE INTO jobs(id,invoice_id,kind,ref,due_at,status,detail,created_at,"
+                "updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (f"followup:{run_id}", invoice_id, "investigate", "followup", due, "pending",
+                 reason_label[:200], self.clock(), self.clock()))
+            if cursor.rowcount:
+                when = _at(due).date().isoformat()
+                self._flow(case_id, self._flow_current(case_id), "collections",
+                           f"Collections agent will check this case again on {when}",
+                           f"followup:{run_id}")
+                self._activity("followup_scheduled", f"agent:{run_id}",
+                               f"Collections agent will look at {invoice_id} again on {when}",
+                               case_id=case_id, ref=f"followup:{run_id}")
+        return due
 
     @staticmethod
     def _cad(cents):
@@ -1701,6 +2093,7 @@ class FinanceCore:
             return {"event": event_id, "kind": event["kind"], "status": "already_applied",
                     "detail": None}
         p = event["payload"]
+        self._source = event["source"]  # who the flow credits (Stripe, a customer, intake)
         handlers = {
             "invoice_created": lambda: self.create_invoice(p["invoice_id"], p["customer"],
                                                            p["total_cents"], due_at=p["due_at"]),
@@ -1728,6 +2121,8 @@ class FinanceCore:
             handlers[event["kind"]]()
         except (Conflict, InvalidInput, NotFound) as exc:
             status, detail = "rejected", str(exc)
+        finally:
+            self._source = None
         invoice_id = p.get("invoice_id")
         case_id = self.case_id(invoice_id) if invoice_id else None
         with self.transaction():
@@ -1755,6 +2150,18 @@ class FinanceCore:
                         f"The customer disputes invoice {invoice_id}. Automatic reminders stop "
                         "while it is disputed. Review the evidence and decide the next step.",
                         evidence, "orchestrator", key=event_id)
+                    # Milestone 6 handoff: the disputes agent reviews it and
+                    # adds a recommendation for the owner (a paid model call,
+                    # so it runs only with a model client and within the caps).
+                    now = self.clock()
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO jobs(id,invoice_id,kind,ref,due_at,status,"
+                        "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (f"dispute:{event_id}", invoice_id, "investigate", "agent:disputes",
+                         now, "pending", now, now))
+                    self._activity("handoff", "orchestrator",
+                                   f"Dispute on {invoice_id} handed to the Disputes agent",
+                                   case_id=case_id, ref=f"dispute:{event_id}")
         return {"event": event_id, "kind": event["kind"], "status": status, "detail": detail,
                 "case_id": case_id if known_case else None}
 
@@ -1774,9 +2181,10 @@ class FinanceCore:
         tokens = [int(x or 0) for x in (input_tokens, output_tokens, cache_read, cache_write)]
         self.db.execute(
             "INSERT INTO model_usage(agent, model, ref, input_tokens, output_tokens, "
-            "cache_read_tokens, cache_write_tokens, cost_micro_cents, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (agent, model, ref, *tokens, self.model_cost_micro_cents(model, *tokens), self.clock()))
+            "cache_read_tokens, cache_write_tokens, cost_micro_cents, created_at, wall_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (agent, model, ref, *tokens, self.model_cost_micro_cents(model, *tokens), self.clock(),
+             self.wall_clock().astimezone(timezone.utc).isoformat()))
 
     def record_model_usage(self, agent, model, ref, input_tokens, output_tokens,
                            cache_read=0, cache_write=0):
@@ -1790,6 +2198,66 @@ class FinanceCore:
         micro = self.db.execute("SELECT COALESCE(SUM(cost_micro_cents), 0) FROM model_usage "
                                 "WHERE created_at >= ?", (today,)).fetchone()[0]
         return -(-micro // 1_000_000)
+
+    # --- Milestone 6: hard caps (real clock) -------------------------------
+
+    @staticmethod
+    def spend_caps():
+        """(daily, total) caps in US cents, from the environment."""
+        def cap(name, default):
+            try:
+                return max(int(os.environ.get(name, default)), 0)
+            except ValueError:
+                return default
+        return (cap("FINANCEOPS_DAILY_CAP_CENTS", DEFAULT_DAILY_CAP_CENTS),
+                cap("FINANCEOPS_TOTAL_CAP_CENTS", DEFAULT_TOTAL_CAP_CENTS))
+
+    def spend_real_today_cents(self):
+        """Model spend since local midnight on the REAL clock, rounded up."""
+        midnight = self.wall_clock().replace(hour=0, minute=0, second=0, microsecond=0)
+        since = midnight.astimezone(timezone.utc).isoformat()
+        micro = self.db.execute("SELECT COALESCE(SUM(cost_micro_cents), 0) FROM model_usage "
+                                "WHERE wall_at >= ?", (since,)).fetchone()[0]
+        return -(-micro // 1_000_000)
+
+    def spend_total_cents(self):
+        micro = self.db.execute(
+            "SELECT COALESCE(SUM(cost_micro_cents), 0) FROM model_usage").fetchone()[0]
+        return -(-micro // 1_000_000)
+
+    def model_call_allowed(self):
+        """False once starting another model call could pass either hard cap.
+        Checked before EVERY model call, automatic or owner-started."""
+        daily, total = self.spend_caps()
+        return (self.spend_real_today_cents() + CALL_MARGIN_CENTS <= daily
+                and self.spend_total_cents() + CALL_MARGIN_CENTS <= total)
+
+    def spend(self):
+        daily, total = self.spend_caps()
+        return {"real_today_cents": self.spend_real_today_cents(),
+                "total_cents": self.spend_total_cents(),
+                "daily_cap_cents": daily, "total_cap_cents": total,
+                "model_calls_allowed": self.model_call_allowed()}
+
+    def note_cap_reached(self):
+        """Once per real day: tell the owner (activity feed) that the caps
+        stopped the agents. Returns True when a notice was written."""
+        if self.model_call_allowed():
+            return False
+        day = self.wall_clock().date().isoformat()
+        key = f"cap:{day}"
+        with self.transaction():
+            if self.db.execute("SELECT 1 FROM activity WHERE kind='spend_cap_reached' AND ref=?",
+                               (key,)).fetchone():
+                return False
+            spent = self.spend()
+            self._activity(
+                "spend_cap_reached", "system",
+                f"Model spend cap reached (${spent['real_today_cents'] / 100:.2f} today of "
+                f"${spent['daily_cap_cents'] / 100:.2f}; ${spent['total_cents'] / 100:.2f} of "
+                f"${spent['total_cap_cents'] / 100:.2f} in total). Agents are paused; "
+                "judgement calls now come to you.", None, key)
+        return True
 
     def budget_enforced(self):
         """The daily model budget applies when the policy has autonomy rules.
@@ -2001,6 +2469,10 @@ class FinanceCore:
                     "SELECT COUNT(*) FROM case_verifications WHERE verified_at >= ?",
                     (week_ago,)).fetchone()[0],
                 "model_spend_today_cents": self.spend_today_cents(),
+                **{k: v for k, v in zip(
+                    ("spend_real_today_cents", "spend_total_cents", "daily_cap_cents",
+                     "total_cap_cents", "model_calls_allowed"),
+                    self.spend().values())},
                 "autonomy_paused": self.autonomy_status()["paused"],
                 "now": now,
                 "simulated_time": self.simulated_time,
@@ -2229,3 +2701,4 @@ class FinanceCore:
                            case_id=case_id, ref=event_id)
         self.db.execute("UPDATE cases SET state=?, version=version+1, updated_at=? WHERE id=?",
                         (next_state, now, case_id))
+        self._flow_from_record(invoice_id, case_id, event_id, reason, prior_state, next_state)

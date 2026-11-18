@@ -28,9 +28,10 @@ def run_cycle(core, has_model=False, briefing=None):
     result = {"events": apply_events(core), "cadence": run_cadence(core),
               "judgement": route_judgement(core, has_model)}
     result["autonomy"] = run_autonomy(core)
+    result["cap_notice"] = core.note_cap_reached()
     result["briefing"] = None
     if (briefing is not None and core.briefing_due() and core.model_budget_left_cents() > 0
-            and not core.agent_paused("briefing")):
+            and core.model_call_allowed() and not core.agent_paused("briefing")):
         try:
             done = briefing()
             result["briefing"] = done["id"] if done else None
@@ -43,6 +44,8 @@ def model_allowed(core):
     """May an automatic model call start now? With autonomy rules in the
     policy, only while today's model budget is not spent. Policies without
     rules keep the Milestone 3 behaviour (an explicit model client decides)."""
+    if not core.model_call_allowed():  # Milestone 6 hard caps (real clock), always
+        return False
     return not core.budget_enforced() or core.model_budget_left_cents() > 0
 
 
@@ -107,6 +110,10 @@ def run_cadence(core):
 def _cadence_step(core, row, day, policy, job_id):
     invoice_id, case_id = row["invoice_id"], row["id"]
     invoice = core.invoice(invoice_id)
+    core.flow_step(case_id, "overdue", "rules",
+                   f"{day} days past the due date with "
+                   f"{core._cad(invoice['outstanding_cents'])} unpaid", job_id,
+                   only_from=("issued", "monitoring"))
     evidence = [e["id"] for e in core.evidence(invoice_id)]
     if row["open_escalations"]:
         return "waiting for the owner (open escalation)"
@@ -138,7 +145,10 @@ def _cadence_step(core, row, day, policy, job_id):
         return "escalated: reminder limit"
     needs_judgement = (invoice["settled_cents"] > 0
                        or core.investigate_jobs(invoice_id, status="pending")
-                       or core.has_unreviewed_evidence(invoice_id))
+                       or core.has_unreviewed_evidence(invoice_id)
+                       # Milestone 6: a reminder already went unanswered, so the next
+                       # one is the Collections agent's call (tone, timing, or the owner).
+                       or (core.reminders_sent(invoice_id) > 0 and core.sim_customer(invoice_id)))
     if needs_judgement:
         # A partial payment, a customer reply or a new document: not routine,
         # the agent (or, without a model budget, the owner) looks first.
@@ -166,6 +176,12 @@ def route_judgement(core, has_model=False):
         return []
     outcomes = []
     for job in core.investigate_jobs(status="pending"):
+        if job["ref"] == "agent:disputes":
+            # The dispute is already escalated to the owner; without a model
+            # the disputes agent's review is simply skipped (no second escalation).
+            if core.claim_job(job["id"]) is not None:
+                core.finish_job(job["id"], "done", "skipped: no model call possible")
+            continue
         try:
             if _escalate_judgement(core, job):
                 outcomes.append(job["id"])

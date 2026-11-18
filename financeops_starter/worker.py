@@ -35,13 +35,15 @@ log = logging.getLogger("financeops.worker")
 INVESTIGATE_RETRY_MINUTES = 5
 
 
-def run_once(core, adapter, investigator_factory=None, briefing_factory=None):
+def run_once(core, adapter, investigator_factory=None, briefing_factory=None, simulator=None):
     """One round: orchestrate, deliver what is due, then run due jobs.
 
     investigator_factory(core) -> Investigator, or None to leave
     re-investigation jobs waiting (they cost a model call).
     briefing_factory(core) -> BriefingAgent, or None for no daily briefing.
-    Both run only within the policy's daily model budget.
+    Both run only within the policy's daily model budget and the hard caps.
+    simulator(core) (Milestone 6, demo only): simulated customers react to
+    the messages delivered so far (customer_sim.react).
     """
     result = {"sent": [], "unknown": [], "cancelled": [], "failed": [],
               "follow_ups_elapsed": [], "investigations": [], "errors": []}
@@ -63,13 +65,19 @@ def run_once(core, adapter, investigator_factory=None, briefing_factory=None):
         except Exception as exc:
             log.exception("delivery of %s failed", item_id)
             result["errors"].append({"item": item_id, "error": type(exc).__name__})
+    if simulator is not None:
+        try:
+            simulator(core)
+        except Exception as exc:
+            log.exception("customer simulation failed")
+            result["errors"].append({"item": "simulator", "error": type(exc).__name__})
     for job in core.due_jobs():
         try:
             if job["kind"] == "settlement_check":
                 if core.run_settlement_check(job["id"])["elapsed"]:
                     result["follow_ups_elapsed"].append(job["id"])
             elif (job["kind"] == "investigate" and investigator_factory is not None
-                  and not core.agent_paused("collections")
+                  and not core.agent_paused(_agent_for(job))
                   and orchestrator.model_allowed(core)):
                 _investigate(core, investigator_factory, job["id"], result)
         except Exception as exc:
@@ -120,12 +128,20 @@ def _deliver(core, adapter, item_id, result):
     result["sent"].append(item_id)
 
 
+def _agent_for(job):
+    """Milestone 6: disputes go to the disputes agent, everything else to collections."""
+    return "disputes" if job["ref"] == "agent:disputes" else "collections"
+
+
 def _investigate(core, investigator_factory, job_id, result):
     job = core.claim_job(job_id)
     if job is None:
         return
     try:
-        run = investigator_factory(core).investigate(FinanceCore.case_id(job["invoice_id"]))
+        investigator = investigator_factory(core)
+        if _agent_for(job) != "collections":
+            investigator = investigator.as_agent(_agent_for(job))
+        run = investigator.investigate(FinanceCore.case_id(job["invoice_id"]))
     except Conflict as exc:  # e.g. another investigation is running: try later
         core.finish_job(job_id, "pending", f"retry: {exc}", retry_minutes=INVESTIGATE_RETRY_MINUTES,
                         count_attempt=False)
@@ -150,13 +166,16 @@ def main():
     parser.add_argument("--agents", "--investigate", dest="investigate", action="store_true",
                         help="run the agents (investigations, daily briefing) with the real "
                              "model, within the policy's daily model budget (costs money)")
+    parser.add_argument("--scripted-agents", action="store_true",
+                        help="run the agents with the free scripted stand-in for Claude "
+                             "(scripted_agent.py): no API key, no cost")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     path = os.environ.get("FINANCEOPS_DB", "financeops.sqlite3")
     simulated = os.environ.get("FINANCEOPS_ENABLE_DEMO", "0") == "1"
     adapter = SimulatedInbox(path)
-    factory = briefing_factory = None
+    factory = briefing_factory = client = None
     if args.investigate:
         import anthropic
         from agent import CLIENT_MAX_RETRIES, CLIENT_TIMEOUT_SECONDS, Investigator
@@ -165,6 +184,16 @@ def main():
         factory = lambda core: Investigator(core, client, enforce_budget=True)  # noqa: E731
         briefing_factory = lambda core: BriefingAgent(core, client)  # noqa: E731
 
+    if args.scripted_agents and not args.investigate:
+        from agent import Investigator
+        from scripted_agent import ScriptedAgentClient
+        scripted = ScriptedAgentClient()
+        factory = lambda core: Investigator(core, scripted, enforce_budget=True)  # noqa: E731
+    simulator = None
+    if simulated:  # demo: simulated customers answer what was delivered (Haiku with --agents)
+        import customer_sim
+        simulator = lambda core: customer_sim.react(core, client)  # noqa: E731
+
     last_round = time.monotonic()
     while True:
         core = FinanceCore(path, simulated_time=simulated)
@@ -172,7 +201,7 @@ def main():
             now = time.monotonic()
             core.tick_playback(now - last_round)  # demo: a playing clock moves on
             last_round = now
-            log.info("round: %s", run_once(core, adapter, factory, briefing_factory))
+            log.info("round: %s", run_once(core, adapter, factory, briefing_factory, simulator))
         except Exception:
             if not args.loop:
                 raise

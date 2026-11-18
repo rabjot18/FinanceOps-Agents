@@ -384,7 +384,11 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
     @app.get("/outcomes", response_model=schemas.OutcomesOut, responses=schemas.OWNER_ERRORS)
     def get_outcomes(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         """Results of the run, computed from stored facts."""
-        return fc.outcomes()
+        import customer_sim
+        out = fc.outcomes()
+        out["personas"] = customer_sim.results(fc, fc.flow()["cases"])
+        out["unauthorized_actions"] = customer_sim.unauthorized(fc)
+        return out
 
     # --- AI investigation (Milestone 2) ----------------------------------
 
