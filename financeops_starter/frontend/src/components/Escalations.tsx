@@ -43,6 +43,13 @@ export function EscalationList({ items, showCase = false }: { items: EscalationR
       <ul className="escalations">
         {items.map(({ escalation: e, customer, outstanding_cents, currency }) => (
           <li key={e.id} className={e.resolved_at ? 'escalation resolved' : 'escalation'} aria-label={`Escalation ${e.id}`}>
+            {e.recommendation && (
+              <div className="recommendation">
+                <span className="recommendation-label">Agent recommends:</span>{' '}
+                {/* Model-written text: plain React text, never HTML. */}
+                <span className="plain-inline">{e.recommendation}</span>
+              </div>
+            )}
             <div className="escalation-head">
               <span className="badge state-escalated">{e.resolved_at ? 'resolved' : humanize(e.reason)}</span>
               {showCase && (

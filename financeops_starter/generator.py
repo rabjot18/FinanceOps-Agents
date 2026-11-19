@@ -467,6 +467,117 @@ def load(core, seed, months=6, customers=25):
     return _summary(business)
 
 
+# --- Milestone 6: a reactive business --------------------------------------
+
+REACTIVE_TERMS_DAYS = (2, 3, 4, 5, 6)  # short terms, so the story starts within minutes
+
+
+def generate_reactive(seed, customers=10, months=1, start=None):
+    """A business whose customers REACT to what is sent (customer_sim.py).
+
+    Only the opening events are pre-written: invoice, contact, contract, and
+    the on-time payment of "punctual" customers. Everything else happens
+    because of what the agents actually send. Returns {"invoices": [...],
+    "events": [...]} where each invoice carries its hidden persona.
+    """
+    import customer_sim
+    _check_size(seed, months, customers)
+    origin = _parse_start(start)
+    rng = random.Random(f"reactive:{seed}")
+    people = _customers(rng, customers)
+    personas = customer_sim.assign_personas(rng, customers)
+    events, invoices = [], []
+
+    def at(days, minutes=0, seconds=0):
+        return (origin + timedelta(days=days, minutes=minutes, seconds=seconds)).isoformat()
+
+    def emit(ref, when, kind, payload):
+        events.append({"ref": ref, "at": when, "kind": kind, "payload": payload})
+
+    # One forgetful customer gets a large invoice (over the automatic limit),
+    # so the demo shows the owner's approval gate; the rest stay under it.
+    large = personas.index("forgetful") if "forgetful" in personas else None
+    number = 0
+    for month in range(months):
+        for index, (customer, persona) in enumerate(zip(people, personas)):
+            number += 1
+            invoice_id = f"INV-R{seed}-{number:04d}"
+            # The first month starts right away (minutes apart), so the demo moves at once.
+            day = month * 30
+            minute = 2 + index * 5
+            terms = rng.choice(REACTIVE_TERMS_DAYS)
+            total = _amount(rng, customer["service"])
+            if index == large:
+                total = rng.randrange(620_000, 940_000) // 100 * 100
+            else:
+                total = min(total, rng.randrange(300_000, 480_000))
+            due = at(day + terms, 23 * 60 + 59)
+            emit(f"{invoice_id}:created", at(day, minute), "invoice_created",
+                 {"invoice_id": invoice_id, "customer": customer["name"], "total_cents": total,
+                  "due_at": due})
+            emit(f"{invoice_id}:contact", at(day, minute, 1), "contact_set",
+                 {"invoice_id": invoice_id, "address": customer["address"]})
+            body = rng.choice(_CONTRACT).format(
+                ref=f"SA-{rng.randrange(1000, 9999)}", company=COMPANY,
+                customer=customer["name"], service=customer["service"][0], inv=invoice_id,
+                amt=_money(rng, total), terms=terms)
+            emit(f"{invoice_id}:contract", at(day, minute, 2), "evidence_added",
+                 {"evidence_id": f"{invoice_id}-contract", "invoice_id": invoice_id,
+                  "body": body})
+            if persona == "punctual":
+                emit(f"{invoice_id}:pay", at(day + max(terms - 1, 1), 11 * 60 + index),
+                     "settlement_received",
+                     {"settlement_id": f"{invoice_id}-pay", "invoice_id": invoice_id,
+                      "amount_cents": total, "currency": CURRENCY})
+            invoices.append({"invoice_id": invoice_id, "persona": persona,
+                             "profile": {"first_name": customer["contact"].split()[0],
+                                         "contact": customer["contact"],
+                                         "service": customer["service"][0]}})
+    events.sort(key=lambda e: (e["at"], e["ref"]))
+    return {"seed": seed, "customers": customers, "months": months, "invoices": invoices,
+            "events": events}
+
+
+def load_reactive(core, seed, customers=10, months=1, speed=144):
+    """Schedule a reactive business at the current simulated time and press
+    play. Repeating the same seed adds nothing (event dedupe). Returns
+    schemas.DemoRunOut."""
+    with core.transaction():
+        prior = core.db.execute("SELECT MIN(created_at) FROM sim_customers WHERE seed=?",
+                                (seed,)).fetchone()[0]
+    start = prior or _parse_start(core.clock()).isoformat()
+    business = generate_reactive(seed, customers, months, start)
+    if core.policy() is None:
+        core.set_policy(60, 5, 3, autonomy_rules=DEFAULT_AUTONOMY_RULES,
+                        cadence_days=DEFAULT_CADENCE_DAYS, daily_model_budget_cents=300,
+                        created_by="generator")
+    for event in business["events"]:
+        core.schedule_event(event["kind"], event["payload"], "generator",
+                            f"react:{seed}:{event['ref']}", at=event["at"], synthetic=True)
+    for item in business["invoices"]:
+        # The invoice row is created when its event applies; create it now
+        # (same data, idempotent) so the hidden persona can reference it.
+        created = next(e for e in business["events"] if e["kind"] == "invoice_created"
+                       and e["payload"]["invoice_id"] == item["invoice_id"])
+        with core.transaction():
+            exists = core.db.execute("SELECT 1 FROM sim_customers WHERE invoice_id=?",
+                                     (item["invoice_id"],)).fetchone()
+        if exists:
+            continue
+        p = created["payload"]
+        core.create_invoice(p["invoice_id"], p["customer"], p["total_cents"], due_at=p["due_at"])
+        with core.transaction():
+            core.db.execute(
+                "INSERT OR IGNORE INTO sim_customers(invoice_id, seed, persona, profile, "
+                "created_at) VALUES(?,?,?,?,?)",
+                (item["invoice_id"], seed, item["persona"], json.dumps(item["profile"]), start))
+    core.set_playback("speed", speed)
+    clock = core.set_playback("play")
+    return {"seed": seed, "customers": customers, "months": months,
+            "invoices": len(business["invoices"]), "playing": clock["playing"],
+            "speed": clock["speed"], "simulated": True}
+
+
 def truth(core, seed):
     """schemas.TruthOut for a stored run; NotFound for an unknown seed."""
     run = stored_run(core, seed)

@@ -21,6 +21,10 @@ export const keys = {
   clock: ['clock'] as const,
   scenarios: ['scenarios'] as const,
   inbox: ['inbox'] as const,
+  flow: ['flow'] as const,
+  caseFlow: (caseId: string) => ['case-flow', caseId] as const,
+  allCaseFlows: ['case-flow'] as const,
+  outcomes: ['outcomes'] as const,
 };
 
 /** Returns null instead of throwing when the server says 404 (nothing exists yet). */
@@ -97,6 +101,28 @@ export function useClock(enabled: boolean) {
   return useQuery({ queryKey: keys.clock, queryFn: () => client.clock(), enabled, refetchInterval: pollMs });
 }
 
+// --- Milestone 6: flow board and outcomes (polled, like the summary) ---
+
+export function useFlow() {
+  const { client, pollMs } = useSession();
+  return useQuery({ queryKey: keys.flow, queryFn: () => client.flow(), refetchInterval: pollMs });
+}
+
+export function useCaseFlow(caseId: string | null) {
+  const { client, pollMs } = useSession();
+  return useQuery({
+    queryKey: keys.caseFlow(caseId ?? ''),
+    queryFn: () => client.caseFlow(caseId ?? ''),
+    enabled: !!caseId,
+    refetchInterval: pollMs,
+  });
+}
+
+export function useOutcomes() {
+  const { client, pollMs } = useSession();
+  return useQuery({ queryKey: keys.outcomes, queryFn: () => client.outcomes(), refetchInterval: pollMs });
+}
+
 export function useScenarios() {
   const { client } = useSession();
   return useQuery({ queryKey: keys.scenarios, queryFn: () => client.scenarios(), staleTime: Infinity });
@@ -120,6 +146,9 @@ export function invalidateFor(qc: QueryClient, items: ActivityItem[]) {
   void qc.invalidateQueries({ queryKey: keys.attention });
   void qc.invalidateQueries({ queryKey: keys.summary });
   void qc.invalidateQueries({ queryKey: keys.allCases });
+  void qc.invalidateQueries({ queryKey: keys.flow });
+  void qc.invalidateQueries({ queryKey: keys.allCaseFlows });
+  void qc.invalidateQueries({ queryKey: keys.outcomes });
   const caseWide = items.some((i) => i.case_id === null);
   if (caseWide) void qc.invalidateQueries({ queryKey: keys.allWorkspaces });
   else
@@ -167,7 +196,18 @@ export type ChangeResult<T> = { ok: true; data: T } | { ok: false; error: ApiErr
 /** Everything an owner change can affect. Awaited, so buttons stay busy until fresh data is in. */
 export async function refreshAll(qc: QueryClient) {
   await Promise.all(
-    [keys.attention, keys.summary, keys.allCases, keys.allWorkspaces, keys.activity, keys.agents, keys.autonomy].map(
+    [
+      keys.attention,
+      keys.summary,
+      keys.allCases,
+      keys.allWorkspaces,
+      keys.activity,
+      keys.agents,
+      keys.autonomy,
+      keys.flow,
+      keys.allCaseFlows,
+      keys.outcomes,
+    ].map(
       (queryKey) => qc.invalidateQueries({ queryKey }),
     ),
   );

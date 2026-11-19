@@ -146,7 +146,7 @@ class ControlTests(Milestone5TestCase):
 
     def test_agents_can_be_paused(self):
         agents = {a["name"]: a for a in self.call("GET", "/agents")["agents"]}
-        self.assertEqual(set(agents), {"collections", "briefing"})
+        self.assertEqual(set(agents), {"collections", "disputes", "briefing"})
         self.assertTrue(agents["collections"]["can_write"])
         self.assertFalse(agents["briefing"]["can_write"])
         self.assertTrue(self.call("POST", "/agents/briefing/pause")["paused"])
@@ -280,10 +280,12 @@ class MigrationV5Tests(unittest.TestCase):
                     *(f"DROP TABLE {t}" for t in ("events", "activity", "escalations",
                                                    "autonomy_state", "agent_controls", "briefings",
                                                    "sim_playback", "generator_runs",
-                                                   "model_usage")),
+                                                   "model_usage", "case_flow", "sim_customers",
+                                                   "sim_reactions")),
                     "ALTER TABLE invoices DROP COLUMN due_at",
                     "ALTER TABLE actions DROP COLUMN autonomy",
                     "ALTER TABLE actions DROP COLUMN superseded_by",
+                    "ALTER TABLE actions DROP COLUMN message_text",
                     "ALTER TABLE policies DROP COLUMN autonomy_rules",
                     "ALTER TABLE policies DROP COLUMN cadence_days",
                     "ALTER TABLE policies DROP COLUMN daily_model_budget_cents",

@@ -7,6 +7,7 @@ const backend = 'http://127.0.0.1:8000';
 const apiPrefixes = [
   '/cases', '/actions', '/policy', '/invoices', '/agent-runs', '/demo',
   '/attention', '/summary', '/activity', '/escalations', '/autonomy', '/agents', '/briefings',
+  '/flow', '/outcomes',
 ];
 
 export default defineConfig({

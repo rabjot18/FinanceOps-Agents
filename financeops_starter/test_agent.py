@@ -127,7 +127,7 @@ class InvestigationTests(AgentTestCase):
         self.assertEqual(request["fallbacks"], "default")
         self.assertEqual({t["name"] for t in request["tools"]},
                          {"get_invoice", "get_evidence", "get_case_history", "get_policy",
-                          "propose_action", "escalate_to_owner"})
+                          "propose_action", "escalate_to_owner", "schedule_follow_up"})
         for tool in request["tools"]:
             self.assertTrue(tool["strict"])
             props = tool["input_schema"].get("properties", {})
@@ -516,13 +516,13 @@ class MigrationV3Tests(unittest.TestCase):
                          "case_verifications", "sim_clock")
             v5_tables = ("events", "activity", "escalations", "autonomy_state",
                          "agent_controls", "briefings", "sim_playback", "generator_runs",
-                         "model_usage")
+                         "model_usage", "case_flow", "sim_customers", "sim_reactions")
             with core.transaction():
                 for sql in (*(f"DROP TABLE {t}" for t in v4_tables + v5_tables),
                             "ALTER TABLE invoices DROP COLUMN due_at",
                             *(f"ALTER TABLE actions DROP COLUMN {c}"
                               for c in ("payload", "payload_hash", "rationale",
-                                        "autonomy", "superseded_by")),
+                                        "autonomy", "superseded_by", "message_text")),
                             "DROP TABLE agent_tool_calls", "DROP TABLE agent_runs",
                             "ALTER TABLE actions DROP COLUMN proposed_by",
                             "UPDATE schema_meta SET version=2"):

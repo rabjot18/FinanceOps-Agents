@@ -5,6 +5,9 @@ import { api, ApiError } from './api/client';
 import { TokenEntry } from './components/TokenEntry';
 import { Shell } from './components/Shell';
 import { SessionProvider, type Session } from './session';
+import { FlowPage } from './pages/FlowPage';
+import { DecisionsPage } from './pages/DecisionsPage';
+import { OutcomesPage } from './pages/OutcomesPage';
 import { HomePage } from './pages/HomePage';
 import { CasesPage } from './pages/CasesPage';
 import { CaseDetailPage } from './pages/CaseDetailPage';
@@ -100,7 +103,10 @@ export function App({ pollMs = 3000 }: Props) {
         <HashRouter>
           <Shell headingRef={mainHeading}>
             <Routes>
-              <Route path="/" element={<HomePage />} />
+              <Route path="/" element={<FlowPage />} />
+              <Route path="/decisions" element={<DecisionsPage />} />
+              <Route path="/outcomes" element={<OutcomesPage />} />
+              <Route path="/home" element={<HomePage />} />
               <Route path="/cases" element={<CasesPage />} />
               <Route path="/cases/:caseId" element={<CaseDetailPage />} />
               <Route path="/activity" element={<ActivityPage />} />

@@ -240,7 +240,11 @@
               "autonomy_resumed",
               "agent_paused",
               "agent_resumed",
-              "policy_changed"
+              "policy_changed",
+              "followup_scheduled",
+              "customer_simulated",
+              "handoff",
+              "spend_cap_reached"
             ],
             "title": "Kind",
             "type": "string"
@@ -329,6 +333,7 @@
           "name": {
             "enum": [
               "collections",
+              "disputes",
               "briefing"
             ],
             "title": "Name",
@@ -401,6 +406,7 @@
           "agent": {
             "enum": [
               "collections",
+              "disputes",
               "briefing"
             ],
             "title": "Agent",
@@ -586,6 +592,7 @@
           "agent": {
             "enum": [
               "collections",
+              "disputes",
               "briefing"
             ],
             "title": "Agent",
@@ -1336,6 +1343,54 @@
         "title": "CaseEvent",
         "type": "object"
       },
+      "CaseFlowOut": {
+        "additionalProperties": false,
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "customer": {
+            "title": "Customer",
+            "type": "string"
+          },
+          "invoice_id": {
+            "title": "Invoice Id",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "issued",
+              "monitoring",
+              "overdue",
+              "contacted",
+              "customer_replied",
+              "payment_received",
+              "closed_verified",
+              "needs_you",
+              "disputed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/FlowStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "case_id",
+          "invoice_id",
+          "customer",
+          "stage",
+          "steps"
+        ],
+        "title": "CaseFlowOut",
+        "type": "object"
+      },
       "CaseListOut": {
         "additionalProperties": false,
         "properties": {
@@ -1733,6 +1788,88 @@
         "title": "Delivery",
         "type": "object"
       },
+      "DemoRunIn": {
+        "additionalProperties": false,
+        "description": "Milestone 6: load a reactive business (customers answer what agents send) and press play.",
+        "properties": {
+          "customers": {
+            "default": 10,
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "Customers",
+            "type": "integer"
+          },
+          "months": {
+            "default": 1,
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Months",
+            "type": "integer"
+          },
+          "seed": {
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "speed": {
+            "default": 144,
+            "maximum": 10080.0,
+            "minimum": 1.0,
+            "title": "Speed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seed"
+        ],
+        "title": "DemoRunIn",
+        "type": "object"
+      },
+      "DemoRunOut": {
+        "additionalProperties": false,
+        "properties": {
+          "customers": {
+            "title": "Customers",
+            "type": "integer"
+          },
+          "invoices": {
+            "title": "Invoices",
+            "type": "integer"
+          },
+          "months": {
+            "title": "Months",
+            "type": "integer"
+          },
+          "playing": {
+            "title": "Playing",
+            "type": "boolean"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "simulated": {
+            "default": true,
+            "title": "Simulated",
+            "type": "boolean"
+          },
+          "speed": {
+            "title": "Speed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seed",
+          "customers",
+          "months",
+          "invoices",
+          "playing",
+          "speed"
+        ],
+        "title": "DemoRunOut",
+        "type": "object"
+      },
       "DisputeIn": {
         "additionalProperties": false,
         "properties": {
@@ -1813,6 +1950,17 @@
           "reason": {
             "title": "Reason",
             "type": "string"
+          },
+          "recommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation"
           },
           "resolution_note": {
             "anyOf": [
@@ -1961,6 +2109,242 @@
           "evidence_ids"
         ],
         "title": "FindingOut",
+        "type": "object"
+      },
+      "FlowCase": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "enum": [
+              "intake",
+              "rules",
+              "collections",
+              "disputes",
+              "customer",
+              "verifier",
+              "owner",
+              "stripe"
+            ],
+            "title": "Actor",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "customer": {
+            "title": "Customer",
+            "type": "string"
+          },
+          "invoice_id": {
+            "title": "Invoice Id",
+            "type": "string"
+          },
+          "needs_owner": {
+            "title": "Needs Owner",
+            "type": "boolean"
+          },
+          "outstanding_cents": {
+            "title": "Outstanding Cents",
+            "type": "integer"
+          },
+          "stage": {
+            "enum": [
+              "issued",
+              "monitoring",
+              "overdue",
+              "contacted",
+              "customer_replied",
+              "payment_received",
+              "closed_verified",
+              "needs_you",
+              "disputed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "total_cents": {
+            "title": "Total Cents",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "invoice_id",
+          "customer",
+          "stage",
+          "actor",
+          "total_cents",
+          "outstanding_cents",
+          "currency",
+          "needs_owner",
+          "updated_at"
+        ],
+        "title": "FlowCase",
+        "type": "object"
+      },
+      "FlowOut": {
+        "additionalProperties": false,
+        "description": "Every case's current stage, from recorded steps only (never animated guesses).",
+        "properties": {
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/FlowCase"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "cursor": {
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "now": {
+            "title": "Now",
+            "type": "string"
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/FlowStep"
+            },
+            "title": "Recent",
+            "type": "array"
+          },
+          "simulated_time": {
+            "title": "Simulated Time",
+            "type": "boolean"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/FlowStageOut"
+            },
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stages",
+          "cases",
+          "recent",
+          "cursor",
+          "now",
+          "simulated_time"
+        ],
+        "title": "FlowOut",
+        "type": "object"
+      },
+      "FlowStageOut": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "id": {
+            "enum": [
+              "issued",
+              "monitoring",
+              "overdue",
+              "contacted",
+              "customer_replied",
+              "payment_received",
+              "closed_verified",
+              "needs_you",
+              "disputed"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "count"
+        ],
+        "title": "FlowStageOut",
+        "type": "object"
+      },
+      "FlowStep": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "enum": [
+              "intake",
+              "rules",
+              "collections",
+              "disputes",
+              "customer",
+              "verifier",
+              "owner",
+              "stripe"
+            ],
+            "title": "Actor",
+            "type": "string"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage": {
+            "enum": [
+              "issued",
+              "monitoring",
+              "overdue",
+              "contacted",
+              "customer_replied",
+              "payment_received",
+              "closed_verified",
+              "needs_you",
+              "disputed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "case_id",
+          "stage",
+          "actor",
+          "summary",
+          "ref",
+          "created_at"
+        ],
+        "title": "FlowStep",
         "type": "object"
       },
       "GeneratorIn": {
@@ -2422,6 +2806,21 @@
               }
             ],
             "title": "To"
+          },
+          "written_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "code",
+                  "agent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Written By"
           }
         },
         "required": [
@@ -2441,6 +2840,131 @@
         "title": "MessagePayload",
         "type": "object"
       },
+      "OutcomesOut": {
+        "additionalProperties": false,
+        "description": "Results of the run, computed by the backend from stored facts.",
+        "properties": {
+          "agent_runs": {
+            "title": "Agent Runs",
+            "type": "integer"
+          },
+          "avg_days_to_pay": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Days To Pay"
+          },
+          "cases_closed": {
+            "title": "Cases Closed",
+            "type": "integer"
+          },
+          "cases_total": {
+            "title": "Cases Total",
+            "type": "integer"
+          },
+          "closed_without_owner": {
+            "title": "Closed Without Owner",
+            "type": "integer"
+          },
+          "collected_cents": {
+            "title": "Collected Cents",
+            "type": "integer"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "followups_scheduled": {
+            "title": "Followups Scheduled",
+            "type": "integer"
+          },
+          "invoiced_cents": {
+            "title": "Invoiced Cents",
+            "type": "integer"
+          },
+          "messages_sent": {
+            "title": "Messages Sent",
+            "type": "integer"
+          },
+          "messages_written_by_agents": {
+            "title": "Messages Written By Agents",
+            "type": "integer"
+          },
+          "narrative": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BriefingOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "now": {
+            "title": "Now",
+            "type": "string"
+          },
+          "open_for_owner": {
+            "title": "Open For Owner",
+            "type": "integer"
+          },
+          "outstanding_cents": {
+            "title": "Outstanding Cents",
+            "type": "integer"
+          },
+          "owner_decisions": {
+            "title": "Owner Decisions",
+            "type": "integer"
+          },
+          "personas": {
+            "items": {
+              "$ref": "#/components/schemas/PersonaResult"
+            },
+            "title": "Personas",
+            "type": "array"
+          },
+          "simulated_time": {
+            "title": "Simulated Time",
+            "type": "boolean"
+          },
+          "spend": {
+            "$ref": "#/components/schemas/SpendOut"
+          },
+          "unauthorized_actions": {
+            "title": "Unauthorized Actions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "currency",
+          "invoiced_cents",
+          "collected_cents",
+          "outstanding_cents",
+          "cases_total",
+          "cases_closed",
+          "closed_without_owner",
+          "owner_decisions",
+          "open_for_owner",
+          "messages_sent",
+          "messages_written_by_agents",
+          "followups_scheduled",
+          "agent_runs",
+          "avg_days_to_pay",
+          "unauthorized_actions",
+          "spend",
+          "personas",
+          "narrative",
+          "now",
+          "simulated_time"
+        ],
+        "title": "OutcomesOut",
+        "type": "object"
+      },
       "PauseIn": {
         "additionalProperties": false,
         "properties": {
@@ -2458,6 +2982,74 @@
           }
         },
         "title": "PauseIn",
+        "type": "object"
+      },
+      "PersonaResult": {
+        "additionalProperties": false,
+        "description": "One simulated customer: its hidden persona (shown only in outcomes) and how it went.",
+        "properties": {
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct"
+          },
+          "customer": {
+            "title": "Customer",
+            "type": "string"
+          },
+          "expected": {
+            "title": "Expected",
+            "type": "string"
+          },
+          "invoice_id": {
+            "title": "Invoice Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "issued",
+              "monitoring",
+              "overdue",
+              "contacted",
+              "customer_replied",
+              "payment_received",
+              "closed_verified",
+              "needs_you",
+              "disputed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "invoice_id",
+          "customer",
+          "persona",
+          "expected",
+          "stage",
+          "outcome",
+          "correct"
+        ],
+        "title": "PersonaResult",
         "type": "object"
       },
       "PolicyIn": {
@@ -2827,6 +3419,40 @@
         "title": "SettlementIn",
         "type": "object"
       },
+      "SpendOut": {
+        "additionalProperties": false,
+        "properties": {
+          "daily_cap_cents": {
+            "title": "Daily Cap Cents",
+            "type": "integer"
+          },
+          "model_calls_allowed": {
+            "title": "Model Calls Allowed",
+            "type": "boolean"
+          },
+          "real_today_cents": {
+            "title": "Real Today Cents",
+            "type": "integer"
+          },
+          "total_cap_cents": {
+            "title": "Total Cap Cents",
+            "type": "integer"
+          },
+          "total_cents": {
+            "title": "Total Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "real_today_cents",
+          "total_cents",
+          "daily_cap_cents",
+          "total_cap_cents",
+          "model_calls_allowed"
+        ],
+        "title": "SpendOut",
+        "type": "object"
+      },
       "SummaryOut": {
         "additionalProperties": false,
         "description": "Headline numbers, computed by the backend; the UI never adds them up.",
@@ -2846,6 +3472,16 @@
           "currency": {
             "title": "Currency",
             "type": "string"
+          },
+          "daily_cap_cents": {
+            "default": 0,
+            "title": "Daily Cap Cents",
+            "type": "integer"
+          },
+          "model_calls_allowed": {
+            "default": true,
+            "title": "Model Calls Allowed",
+            "type": "boolean"
           },
           "model_spend_today_cents": {
             "anyOf": [
@@ -2885,6 +3521,21 @@
           "simulated_time": {
             "title": "Simulated Time",
             "type": "boolean"
+          },
+          "spend_real_today_cents": {
+            "default": 0,
+            "title": "Spend Real Today Cents",
+            "type": "integer"
+          },
+          "spend_total_cents": {
+            "default": 0,
+            "title": "Spend Total Cents",
+            "type": "integer"
+          },
+          "total_cap_cents": {
+            "default": 0,
+            "title": "Total Cap Cents",
+            "type": "integer"
           }
         },
         "required": [
@@ -5020,6 +5671,102 @@
         "summary": "Propose Action"
       }
     },
+    "/cases/{case_id}/flow": {
+      "get": {
+        "description": "One case's path through the stages, oldest step first.",
+        "operationId": "get_case_flow_cases__case_id__flow_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseFlowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Get Case Flow"
+      }
+    },
     "/cases/{case_id}/investigate": {
       "post": {
         "description": "Owner-only because each run calls a paid model. The result is a\nproposal at most; approval stays a separate owner step.",
@@ -5905,6 +6652,78 @@
         ]
       }
     },
+    "/demo/run": {
+      "post": {
+        "description": "Load a reactive synthetic business (simulated customers answer what the\nagents actually send) and start playback. The worker loop does the rest.",
+        "operationId": "demo_run_demo_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoRunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Demo Run",
+        "tags": [
+          "demo: synthetic events"
+        ]
+      }
+    },
     "/demo/scenarios": {
       "get": {
         "operationId": "demo_scenarios_demo_scenarios_get",
@@ -6329,6 +7148,93 @@
         "summary": "Resolve Escalation"
       }
     },
+    "/flow": {
+      "get": {
+        "description": "Every case's current stage and the latest recorded steps (who moved what).",
+        "operationId": "get_flow_flow_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Get Flow"
+      }
+    },
     "/invoices/{invoice_id}": {
       "get": {
         "operationId": "get_invoice_invoices__invoice_id__get",
@@ -6396,6 +7302,93 @@
           }
         },
         "summary": "Get Invoice"
+      }
+    },
+    "/outcomes": {
+      "get": {
+        "description": "Results of the run, computed from stored facts.",
+        "operationId": "get_outcomes_outcomes_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutcomesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Owner authentication required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Conflict: the case changed or the ID is used; refetch, never retry blindly"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Invalid input"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "Unavailable: database busy, owner token or model client not configured"
+          }
+        },
+        "summary": "Get Outcomes"
       }
     },
     "/policy": {

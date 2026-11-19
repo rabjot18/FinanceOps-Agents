@@ -126,6 +126,14 @@ class GeneratorIn(_Body):
     customers: StrictInt = Field(default=25, ge=1, le=200)
 
 
+class DemoRunIn(_Body):
+    """Milestone 6: load a reactive business (customers answer what agents send) and press play."""
+    seed: StrictInt = Field(ge=0, le=2**31 - 1)
+    customers: StrictInt = Field(default=10, ge=1, le=30)
+    months: StrictInt = Field(default=1, ge=1, le=3)
+    speed: StrictInt = Field(default=144, ge=1, le=7 * 24 * 60)  # 144 = 1 simulated day per 10 s
+
+
 class ContactIn(_Body):
     invoice_id: StrictStr = Field(min_length=1, max_length=64, pattern=ID_PATTERN)
     address: StrictStr = Field(min_length=3, max_length=254)
@@ -147,8 +155,8 @@ def _invoice_out(invoice):
 
 
 def _not_built(step):
-    """Part of the frozen Milestone 5 contract whose logic lands in a later step."""
-    raise HTTPException(503, f"Not built yet (Milestone 5 step {step})")
+    """Part of the frozen contract whose logic lands in a later step."""
+    raise HTTPException(503, f"Not built yet (Milestone {step})")
 
 
 def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
@@ -359,6 +367,28 @@ def create_app(db_path=_FROM_ENV, owner_token=_FROM_ENV, enable_demo=_FROM_ENV,
     def latest_briefing(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
         """Model-written text: show as plain text only. 404 until the first briefing."""
         return fc.latest_briefing()
+
+    # --- Milestone 6: the flow and outcomes --------------------------------
+
+    @app.get("/flow", response_model=schemas.FlowOut, responses=schemas.OWNER_ERRORS)
+    def get_flow(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        """Every case's current stage and the latest recorded steps (who moved what)."""
+        return fc.flow()
+
+    @app.get("/cases/{case_id}/flow", response_model=schemas.CaseFlowOut, responses=schemas.OWNER_ERRORS)
+    def get_case_flow(case_id: str, _: str = Depends(require_owner),
+                      fc: FinanceCore = Depends(core)):
+        """One case's path through the stages, oldest step first."""
+        return fc.case_flow(case_id)
+
+    @app.get("/outcomes", response_model=schemas.OutcomesOut, responses=schemas.OWNER_ERRORS)
+    def get_outcomes(_: str = Depends(require_owner), fc: FinanceCore = Depends(core)):
+        """Results of the run, computed from stored facts."""
+        import customer_sim
+        out = fc.outcomes()
+        out["personas"] = customer_sim.results(fc, fc.flow()["cases"])
+        out["unauthorized_actions"] = customer_sim.unauthorized(fc)
+        return out
 
     # --- AI investigation (Milestone 2) ----------------------------------
 

@@ -321,6 +321,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/cases/{case_id}/flow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Case Flow
+         * @description One case's path through the stages, oldest step first.
+         */
+        get: operations["get_case_flow_cases__case_id__flow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases/{case_id}/investigate": {
         parameters: {
             query?: never;
@@ -530,6 +550,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/demo/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo Run
+         * @description Load a reactive synthetic business (simulated customers answer what the
+         *     agents actually send) and start playback. The worker loop does the rest.
+         */
+        post: operations["demo_run_demo_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/demo/scenarios": {
         parameters: {
             query?: never;
@@ -622,6 +663,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/flow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Flow
+         * @description Every case's current stage and the latest recorded steps (who moved what).
+         */
+        get: operations["get_flow_flow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/invoices/{invoice_id}": {
         parameters: {
             query?: never;
@@ -631,6 +692,26 @@ export interface paths {
         };
         /** Get Invoice */
         get: operations["get_invoice_invoices__invoice_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/outcomes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Outcomes
+         * @description Results of the run, computed from stored facts.
+         */
+        get: operations["get_outcomes_outcomes_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -756,7 +837,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "event_ingested" | "case_state_changed" | "action_proposed" | "action_auto_approved" | "action_approved" | "action_rejected" | "action_superseded" | "message_queued" | "message_sent" | "message_cancelled" | "agent_run_started" | "agent_run_finished" | "escalation_opened" | "escalation_resolved" | "briefing_published" | "autonomy_paused" | "autonomy_resumed" | "agent_paused" | "agent_resumed" | "policy_changed";
+            kind: "event_ingested" | "case_state_changed" | "action_proposed" | "action_auto_approved" | "action_approved" | "action_rejected" | "action_superseded" | "message_queued" | "message_sent" | "message_cancelled" | "agent_run_started" | "agent_run_finished" | "escalation_opened" | "escalation_resolved" | "briefing_published" | "autonomy_paused" | "autonomy_resumed" | "agent_paused" | "agent_resumed" | "policy_changed" | "followup_scheduled" | "customer_simulated" | "handoff" | "spend_cap_reached";
             /** Ref */
             ref: string | null;
             /** Seq */
@@ -785,7 +866,7 @@ export interface components {
              * Name
              * @enum {string}
              */
-            name: "collections" | "briefing";
+            name: "collections" | "disputes" | "briefing";
             /** Outcomes 7D */
             outcomes_7d: {
                 [key: string]: number;
@@ -810,7 +891,7 @@ export interface components {
              * Agent
              * @enum {string}
              */
-            agent: "collections" | "briefing";
+            agent: "collections" | "disputes" | "briefing";
             /** Cache Read Tokens */
             cache_read_tokens: number;
             /** Cache Write Tokens */
@@ -859,7 +940,7 @@ export interface components {
              * Agent
              * @enum {string}
              */
-            agent: "collections" | "briefing";
+            agent: "collections" | "disputes" | "briefing";
             /** Cache Read Tokens */
             cache_read_tokens: number;
             /** Cache Write Tokens */
@@ -1099,6 +1180,22 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** CaseFlowOut */
+        CaseFlowOut: {
+            /** Case Id */
+            case_id: string;
+            /** Customer */
+            customer: string;
+            /** Invoice Id */
+            invoice_id: string;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "issued" | "monitoring" | "overdue" | "contacted" | "customer_replied" | "payment_received" | "closed_verified" | "needs_you" | "disputed";
+            /** Steps */
+            steps: components["schemas"]["FlowStep"][];
+        };
         /** CaseListOut */
         CaseListOut: {
             /** Cases */
@@ -1229,6 +1326,49 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /**
+         * DemoRunIn
+         * @description Milestone 6: load a reactive business (customers answer what agents send) and press play.
+         */
+        DemoRunIn: {
+            /**
+             * Customers
+             * @default 10
+             */
+            customers: number;
+            /**
+             * Months
+             * @default 1
+             */
+            months: number;
+            /** Seed */
+            seed: number;
+            /**
+             * Speed
+             * @default 144
+             */
+            speed: number;
+        };
+        /** DemoRunOut */
+        DemoRunOut: {
+            /** Customers */
+            customers: number;
+            /** Invoices */
+            invoices: number;
+            /** Months */
+            months: number;
+            /** Playing */
+            playing: boolean;
+            /** Seed */
+            seed: number;
+            /**
+             * Simulated
+             * @default true
+             */
+            simulated: boolean;
+            /** Speed */
+            speed: number;
+        };
         /** DisputeIn */
         DisputeIn: {
             /** Disputed */
@@ -1261,6 +1401,8 @@ export interface components {
             raised_by: string;
             /** Reason */
             reason: string;
+            /** Recommendation */
+            recommendation?: string | null;
             /** Resolution Note */
             resolution_note: string | null;
             /** Resolved At */
@@ -1302,6 +1444,88 @@ export interface components {
             evidence_ids: string[];
             /** Statement */
             statement: string;
+        };
+        /** FlowCase */
+        FlowCase: {
+            /**
+             * Actor
+             * @enum {string}
+             */
+            actor: "intake" | "rules" | "collections" | "disputes" | "customer" | "verifier" | "owner" | "stripe";
+            /** Case Id */
+            case_id: string;
+            /** Currency */
+            currency: string;
+            /** Customer */
+            customer: string;
+            /** Invoice Id */
+            invoice_id: string;
+            /** Needs Owner */
+            needs_owner: boolean;
+            /** Outstanding Cents */
+            outstanding_cents: number;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "issued" | "monitoring" | "overdue" | "contacted" | "customer_replied" | "payment_received" | "closed_verified" | "needs_you" | "disputed";
+            /** Total Cents */
+            total_cents: number;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
+         * FlowOut
+         * @description Every case's current stage, from recorded steps only (never animated guesses).
+         */
+        FlowOut: {
+            /** Cases */
+            cases: components["schemas"]["FlowCase"][];
+            /** Cursor */
+            cursor: number;
+            /** Now */
+            now: string;
+            /** Recent */
+            recent: components["schemas"]["FlowStep"][];
+            /** Simulated Time */
+            simulated_time: boolean;
+            /** Stages */
+            stages: components["schemas"]["FlowStageOut"][];
+        };
+        /** FlowStageOut */
+        FlowStageOut: {
+            /** Count */
+            count: number;
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "issued" | "monitoring" | "overdue" | "contacted" | "customer_replied" | "payment_received" | "closed_verified" | "needs_you" | "disputed";
+            /** Label */
+            label: string;
+        };
+        /** FlowStep */
+        FlowStep: {
+            /**
+             * Actor
+             * @enum {string}
+             */
+            actor: "intake" | "rules" | "collections" | "disputes" | "customer" | "verifier" | "owner" | "stripe";
+            /** Case Id */
+            case_id: string;
+            /** Created At */
+            created_at: string;
+            /** Ref */
+            ref: string | null;
+            /** Seq */
+            seq: number;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "issued" | "monitoring" | "overdue" | "contacted" | "customer_replied" | "payment_received" | "closed_verified" | "needs_you" | "disputed";
+            /** Summary */
+            summary: string;
         };
         /** GeneratorIn */
         GeneratorIn: {
@@ -1474,11 +1698,82 @@ export interface components {
             subject: string;
             /** To */
             to: string | null;
+            /** Written By */
+            written_by?: ("code" | "agent") | null;
+        };
+        /**
+         * OutcomesOut
+         * @description Results of the run, computed by the backend from stored facts.
+         */
+        OutcomesOut: {
+            /** Agent Runs */
+            agent_runs: number;
+            /** Avg Days To Pay */
+            avg_days_to_pay: number | null;
+            /** Cases Closed */
+            cases_closed: number;
+            /** Cases Total */
+            cases_total: number;
+            /** Closed Without Owner */
+            closed_without_owner: number;
+            /** Collected Cents */
+            collected_cents: number;
+            /** Currency */
+            currency: string;
+            /** Followups Scheduled */
+            followups_scheduled: number;
+            /** Invoiced Cents */
+            invoiced_cents: number;
+            /** Messages Sent */
+            messages_sent: number;
+            /** Messages Written By Agents */
+            messages_written_by_agents: number;
+            narrative: components["schemas"]["BriefingOut"] | null;
+            /** Now */
+            now: string;
+            /** Open For Owner */
+            open_for_owner: number;
+            /** Outstanding Cents */
+            outstanding_cents: number;
+            /** Owner Decisions */
+            owner_decisions: number;
+            /** Personas */
+            personas: components["schemas"]["PersonaResult"][];
+            /** Simulated Time */
+            simulated_time: boolean;
+            spend: components["schemas"]["SpendOut"];
+            /** Unauthorized Actions */
+            unauthorized_actions: number;
         };
         /** PauseIn */
         PauseIn: {
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * PersonaResult
+         * @description One simulated customer: its hidden persona (shown only in outcomes) and how it went.
+         */
+        PersonaResult: {
+            /** Case Id */
+            case_id: string;
+            /** Correct */
+            correct: boolean | null;
+            /** Customer */
+            customer: string;
+            /** Expected */
+            expected: string;
+            /** Invoice Id */
+            invoice_id: string;
+            /** Outcome */
+            outcome: string;
+            /** Persona */
+            persona: string;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "issued" | "monitoring" | "overdue" | "contacted" | "customer_replied" | "payment_received" | "closed_verified" | "needs_you" | "disputed";
         };
         /** PolicyIn */
         PolicyIn: {
@@ -1601,6 +1896,19 @@ export interface components {
             /** Settlement Id */
             settlement_id: string;
         };
+        /** SpendOut */
+        SpendOut: {
+            /** Daily Cap Cents */
+            daily_cap_cents: number;
+            /** Model Calls Allowed */
+            model_calls_allowed: boolean;
+            /** Real Today Cents */
+            real_today_cents: number;
+            /** Total Cap Cents */
+            total_cap_cents: number;
+            /** Total Cents */
+            total_cents: number;
+        };
         /**
          * SummaryOut
          * @description Headline numbers, computed by the backend; the UI never adds them up.
@@ -1614,6 +1922,16 @@ export interface components {
             awaiting_owner: number;
             /** Currency */
             currency: string;
+            /**
+             * Daily Cap Cents
+             * @default 0
+             */
+            daily_cap_cents: number;
+            /**
+             * Model Calls Allowed
+             * @default true
+             */
+            model_calls_allowed: boolean;
             /** Model Spend Today Cents */
             model_spend_today_cents: number | null;
             /** Now */
@@ -1630,6 +1948,21 @@ export interface components {
             resolved_7d: number;
             /** Simulated Time */
             simulated_time: boolean;
+            /**
+             * Spend Real Today Cents
+             * @default 0
+             */
+            spend_real_today_cents: number;
+            /**
+             * Spend Total Cents
+             * @default 0
+             */
+            spend_total_cents: number;
+            /**
+             * Total Cap Cents
+             * @default 0
+             */
+            total_cap_cents: number;
         };
         /** ToolCallOut */
         ToolCallOut: {
@@ -2956,6 +3289,75 @@ export interface operations {
             };
         };
     };
+    get_case_flow_cases__case_id__flow_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseFlowOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
     investigate_case_cases__case_id__investigate_post: {
         parameters: {
             query?: never;
@@ -3684,6 +4086,66 @@ export interface operations {
             };
         };
     };
+    demo_run_demo_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DemoRunIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoRunOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
     demo_scenarios_demo_scenarios_get: {
         parameters: {
             query?: never;
@@ -4002,6 +4464,73 @@ export interface operations {
             };
         };
     };
+    get_flow_flow_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FlowOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
     get_invoice_invoices__invoice_id__get: {
         parameters: {
             query?: never;
@@ -4020,6 +4549,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InvoiceOut"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Conflict: the case changed or the ID is used; refetch, never retry blindly */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Unavailable: database busy, owner token or model client not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    get_outcomes_outcomes_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutcomesOut"];
+                };
+            };
+            /** @description Owner authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description Not found */

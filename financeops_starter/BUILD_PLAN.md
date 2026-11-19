@@ -1,6 +1,6 @@
 # FinanceOps: build with Claude Code and ECC
 
-## Actual status (updated 16 November 2026)
+## Actual status (updated 18 November 2026)
 
 | Phase | Status | Notes |
 |---|---|---|
@@ -10,7 +10,8 @@
 | 3 — actions, waiting, verification | **Done** | Code-written messages, hash-bound expiring approvals, stored policy + contacts, transactional outbox, `worker.py`, simulated inbox, follow-up and re-investigation jobs, proven closure |
 | 4 — visible product and parallel development | **Done** | Owner console (React + TypeScript + Vite), six synthetic demo scenarios, Playwright e2e, layout redesign; commits 7704fc9, 8a382e4, d931d48, 5f0b13d |
 | 5 — autonomous receivables operator | **In progress: steps 0, 1a, 1b, 1c done and merged (269 backend, 62 frontend, 2 e2e tests); next: step 2 (agent escalate tool, replanning, briefing agent, model budget)** | See `MILESTONE_5_PLAN.md`. Step 0: contract frozen (15 new routes; 3 are 503 stubs for steps 1a/1b), schema V5 (events, activity, escalations, kill switch, agent controls, briefings, demo playback, generator runs; invoice due dates; policy autonomy rules), 16 new tests. Step 1a: `orchestrator.py` (apply due events, reminder cadence acting once on the latest elapsed day, judgement routing, autonomy), autonomy decisions stored on every proposal and executed only through approve/execute as `policy:v<n>/rule:<id>`, kill switch and agent pauses honoured, escalations with an `escalated` case state, activity feed written by code, policy preview (an estimate); 28 new tests; ECC code review, all 7 medium findings fixed (atomic auto-send, pause holds queued automatic messages, agent reminders go to the owner, event ordering, escalations in the event transaction, per-item isolation, paid cases resolve). Model budget enforcement is step 2. 1b (generator) and 1c (UI) run in parallel worktrees. Vendor bills and cash move to later milestones. |
-| 6–7 | Not started | |
+| 6 (hackathon) — agentic operator: outcomes and flow | **Done except the live run** | Plan: `~/.claude/plans/adaptive-pondering-crane.md`. Hard spend caps on the REAL clock ($4.50/day, $25 total, env only, checked before every model call). The collections agent writes its own messages (code checks amounts, IDs, links/contact/bank details, concessions, instruction-like text; code appends the facts), schedules its own follow-ups, escalates with a recommendation. Disputes agent recommends a decision. Reactive simulated customers (hidden personas; code decides behaviour, Haiku writes the wording). `case_flow` records who moved each case; `/flow`, `/cases/{id}/flow`, `/outcomes`, `/demo/run`. New UI: Flow board (React Flow 12.12.1), Your decisions, Outcomes; old pages under Advanced. `scripted_agent.py` + `worker.py --scripted-agents` + `start.ps1` run the whole demo free on Windows. Tests: 308 backend, 84 frontend, 3 e2e (run with `PLAYWRIGHT_CHANNEL=msedge` behind the CGI proxy). Real server + worker + browser checked by hand: a 10-customer month closes 7 cases without the owner, 0 unauthorized actions. Not yet: a live run with real Claude (needs the user's key); Stripe test-mode connector (needs a `sk_test_` key). |
+| 7 | Not started | |
 
 Milestone 3 evidence: 142 tests pass (91 earlier ones, a handful updated for the
 two deliberate contract changes below; 23 new in `test_outbox.py`, 25 new in

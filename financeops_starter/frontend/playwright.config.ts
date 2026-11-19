@@ -15,12 +15,16 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${port}`,
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // PLAYWRIGHT_CHANNEL=msedge (or chrome) uses an installed browser instead of
+  // Playwright's download, e.g. behind a corporate proxy that blocks it.
+  projects: [{
+    name: 'chromium',
+    use: { ...devices['Desktop Chrome'], channel: process.env.PLAYWRIGHT_CHANNEL || undefined },
+  }],
   webServer: {
-    command:
-      'cd .. && FINANCEOPS_DB="$(mktemp -d)/e2e.sqlite3" FINANCEOPS_ENABLE_DEMO=1 ' +
-      'FINANCEOPS_OWNER_TOKEN=e2e-owner-token ' +
-      `exec .venv/bin/uvicorn api:create_app --factory --host 127.0.0.1 --port ${port}`,
+    // Cross-platform launcher (Windows, macOS, Linux): fresh temp DB, demo routes on,
+    // throwaway owner token, uvicorn from ../.venv (Scripts\ on Windows, bin/ elsewhere).
+    command: `node e2e/start-server.mjs ${port}`,
     url: `http://127.0.0.1:${port}/app/`,
     reuseExistingServer: false,
     timeout: 60_000,

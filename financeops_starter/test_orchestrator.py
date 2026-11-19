@@ -85,7 +85,9 @@ class RoutineReminderTests(OrchestratorTestCase):
         self.assertEqual(self.inbox.messages(), [])
         queue = self.core.attention()["approvals"]
         self.assertEqual([a["action"]["id"] for a in queue], ["auto-g-1-d3"])
-        self.assertEqual(queue[0]["action"]["autonomy"]["reasons"], ["no autonomy rule matched"])
+        self.assertEqual(queue[0]["action"]["autonomy"]["reasons"],
+                         ["CAD 6,000.00 is over the automatic limit of CAD 5,000.00 "
+                          "(rule reminder-small): the owner decides"])
 
     def test_a_fast_replay_sends_one_reminder_not_a_burst(self):
         self.business(due_days_ago=20)  # days 3, 7 and 14 have all passed
@@ -262,8 +264,13 @@ class ReviewFindingTests(OrchestratorTestCase):
         self.core.propose("agent-r", "g-1", "collection_reminder", ["g-1-c"], proposed_by="agent:run-1")
         self.assertEqual(self.core.action_detail("agent-r")["autonomy"]["mode"], "approve")
         with mock.patch("core.AGENT_MESSAGES_AUTOMATIC", True):
+            # Milestone 6: an agent message goes out on its own only with its
+            # own text, checked by code.
             self.core.propose("agent-q", "g-1", "request_information", ["g-1-c"],
-                              proposed_by="agent:run-2")
+                              proposed_by="agent:run-2", message_text={
+                                  "subject": "Remittance details",
+                                  "body": "Hello, could you send the remittance details for "
+                                          "your payment so we can match it? Thank you."})
             self.assertEqual(self.core.action_detail("agent-q")["autonomy"]["mode"], "auto")
         # The newer plan replaced the older one; nothing is deleted.
         old = self.core.action_detail("agent-r")
